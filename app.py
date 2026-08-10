@@ -370,9 +370,9 @@ st.subheader("🚀 자동 종목 스캐너")
 if st.button("🔎 18개 종목 자동 분석"):
         results = []
 
-    with st.spinner("18개 종목을 분석하고 있어요..."):
-        for name, code in stock_list.items():
-            try:
+        with st.spinner("18개 종목을 분석하고 있어요..."):
+            for name, code in stock_list.items():
+                try:
                 scan_symbol = code + ".KS"
                 scan_df = load_data(scan_symbol, period=period)
 
