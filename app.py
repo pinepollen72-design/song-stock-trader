@@ -36,6 +36,46 @@ if st.button("🔐 모의투자 API 연결 테스트"):
 
     if token:
         st.success("✅ 한국투자증권 모의투자 API 연결 성공!")
+
+def get_mock_balance():
+    token = get_kis_token()
+
+    if not token:
+        return None
+
+    url = "https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-balance"
+
+    headers = {
+        "content-type": "application/json; charset=utf-8",
+        "authorization": f"Bearer {token}",
+        "appkey": st.secrets["KIS_APP_KEY"],
+        "appsecret": st.secrets["KIS_APP_SECRET"],
+        "tr_id": "VTTC8434R",
+        "custtype": "P",
+    }
+
+    params = {
+        "CANO": st.secrets["KIS_ACCOUNT_NO"],
+        "ACNT_PRDT_CD": st.secrets["KIS_ACCOUNT_PRODUCT_CODE"],
+        "AFHR_FLPR_YN": "N",
+        "OFL_YN": "",
+        "INQR_DVSN": "02",
+        "UNPR_DVSN": "01",
+        "FUND_STTL_ICLD_YN": "N",
+        "FNCG_AMT_AUTO_RDPT_YN": "N",
+        "PRCS_DVSN": "01",
+        "CTX_AREA_FK100": "",
+        "CTX_AREA_NK100": "",
+    }
+
+    response = requests.get(url, headers=headers, params=params)
+
+    if response.status_code == 200:
+        return response.json()
+
+    st.error("모의투자 잔고 조회 실패")
+    st.write(response.text)
+    return None
 # -----------------------------
 # Data
 # -----------------------------
