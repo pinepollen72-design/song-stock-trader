@@ -7,7 +7,35 @@ st.set_page_config(page_title="단기매매 신호 분석기", page_icon="📈",
 
 st.title("📈 볼린저 밴드 + 거래량 + 캔들 + RSI 단기매매 신호 분석기")
 st.caption("교육·분석용 도구입니다. 실제 매매의 수익을 보장하지 않으며 투자 판단은 본인이 하세요.")
+# 한국투자증권 모의투자 API 인증 테스트
+def get_kis_token():
+    url = "https://openapivts.koreainvestment.com:29443/oauth2/tokenP"
 
+    headers = {
+        "content-type": "application/json"
+    }
+
+    body = {
+        "grant_type": "client_credentials",
+        "appkey": st.secrets["KIS_APP_KEY"],
+        "appsecret": st.secrets["KIS_APP_SECRET"]
+    }
+
+    response = requests.post(url, headers=headers, data=json.dumps(body))
+
+    if response.status_code == 200:
+        return response.json().get("access_token")
+    else:
+        st.error("한국투자증권 API 인증 실패")
+        st.write(response.text)
+        return None
+
+
+if st.button("🔐 모의투자 API 연결 테스트"):
+    token = get_kis_token()
+
+    if token:
+        st.success("✅ 한국투자증권 모의투자 API 연결 성공!")
 # -----------------------------
 # Data
 # -----------------------------
