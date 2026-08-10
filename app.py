@@ -12,7 +12,7 @@ from ai_judge import analyze_market_with_ai, merge_ai_filter
 
 st.set_page_config(page_title="쏭 자동매매", page_icon="🤖", layout="wide")
 st.title("🤖 쏭 국내·미국 자동매매")
-st.caption("모의/실전 공용 대시보드입니다. 기본값은 모의투자이며 실전은 별도 잠금 해제가 필요합니다.
+st.caption("모의/실전 공용 대시보드입니다. 기본값은 모의투자이며 실전은 별도 잠금 해제가 필요합니다.")
 
 settings = Settings.from_env()
 
