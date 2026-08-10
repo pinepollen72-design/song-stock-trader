@@ -184,6 +184,28 @@ class KISClient:
             }
         )
 
+
+    def domestic_balance(self) -> Dict[str,Any]:
+        """국내주식 잔고조회. output1=보유종목, output2=계좌요약."""
+        tr_id = "VTTC8434R" if self.env == "demo" else "TTTC8434R"
+        return self.get(
+            "/uapi/domestic-stock/v1/trading/inquire-balance",
+            tr_id,
+            {
+                "CANO": self.account_no,
+                "ACNT_PRDT_CD": self.product_code,
+                "AFHR_FLPR_YN": "N",
+                "OFL_YN": "",
+                "INQR_DVSN": "02",
+                "UNPR_DVSN": "01",
+                "FUND_STTL_ICLD_YN": "N",
+                "FNCG_AMT_AUTO_RDPT_YN": "N",
+                "PRCS_DVSN": "00",
+                "CTX_AREA_FK100": "",
+                "CTX_AREA_NK100": "",
+            }
+        )
+
     def domestic_order(self, code: str, qty: int, side: str,
                        price: int = 0, market_order: bool = True) -> Dict[str,Any]:
         if side not in ("buy","sell"):
@@ -442,6 +464,35 @@ def score_ticker(symbol: str, market: str):
         "순점수": int(net),
         "종합신호": signal,
     }
+
+
+def parse_domestic_holdings(balance_json: Dict[str,Any]) -> pd.DataFrame:
+    """KIS 잔고 output1을 자동매매 엔진용 공통 컬럼으로 정리."""
+    rows = (balance_json or {}).get("output1", []) or []
+    if not rows:
+        return pd.DataFrame(columns=["종목코드","종목명","보유수량","평균매입가","현재가"])
+
+    df = pd.DataFrame(rows)
+
+    def first_existing(*names):
+        for n in names:
+            if n in df.columns:
+                return n
+        return None
+
+    code = first_existing("pdno", "mksc_shrn_iscd")
+    name = first_existing("prdt_name", "hts_kor_isnm")
+    qty = first_existing("hldg_qty", "hold_qty")
+    avg = first_existing("pchs_avg_pric", "avg_pric")
+    cur = first_existing("prpr", "stck_prpr")
+
+    out = pd.DataFrame()
+    out["종목코드"] = df[code].astype(str).str.zfill(6) if code else ""
+    out["종목명"] = df[name].astype(str) if name else ""
+    out["보유수량"] = pd.to_numeric(df[qty], errors="coerce").fillna(0).astype(int) if qty else 0
+    out["평균매입가"] = pd.to_numeric(df[avg], errors="coerce").fillna(0.0) if avg else 0.0
+    out["현재가"] = pd.to_numeric(df[cur], errors="coerce").fillna(0.0) if cur else 0.0
+    return out[out["보유수량"] > 0].reset_index(drop=True)
 
 def split_budget(total: int, parts: List[int]) -> List[int]:
     if sum(parts) <= 0:

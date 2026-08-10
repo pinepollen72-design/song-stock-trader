@@ -6,6 +6,7 @@ from trader_core import (
     score_ticker, split_budget, is_market_open, market_force_exit_time,
     load_trade_log
 )
+from auto_engine import AutoConfig, run_domestic_cycle, load_state, reset_today_state
 
 st.set_page_config(page_title="쏭 자동매매", page_icon="🤖", layout="wide")
 st.title("🤖 쏭 국내·미국 자동매매")
@@ -207,16 +208,105 @@ st.info(
 )
 
 st.divider()
-st.subheader("🤖 자동매매 엔진")
-if auto_on:
-    if env == "real" and not live_unlocked:
-        st.error("실전 잠금이 해제되지 않아 자동주문을 실행하지 않습니다.")
-    else:
-        st.success("자동매매 설정이 ON입니다.")
-        st.warning("Streamlit 화면만으로는 24시간 상시 실행을 보장하지 않습니다. "
-                   "`worker.py`를 항상 켜진 서버에서 실행해야 24시간 감시가 됩니다.")
+st.subheader("🤖 자동매매 엔진 v3")
+
+if market != "국내":
+    st.info("미국 자동주문은 실시간 호가·체결 검증 모듈을 붙인 뒤 활성화합니다. 지금은 분석만 사용하세요.")
 else:
-    st.caption("자동매매는 OFF입니다. 분석/조회만 수행합니다.")
+    leader_for_trade = st.session_state.get("leader_df", pd.DataFrame())
+
+    cfg = AutoConfig(
+        daily_budget=int(budget),
+        per_stock_budget=int(per_stock),
+        max_positions=int(max_positions),
+        buy1_pct=int(b1),
+        buy2_pct=int(b2),
+        buy3_pct=int(b3),
+        stop_loss_pct=float(stop_loss),
+        take1_pct=float(take1),
+        take2_pct=float(take2),
+    )
+
+    st.write(
+        f"진입 기준: 대장주 TOP5 + 🟢 매수 후보 + 종합점수 {cfg.min_combined_score:.0f}점 이상"
+    )
+    st.write(
+        f"추가매수: 평균단가 대비 +{cfg.add2_trigger_pct:.1f}% → 2차, "
+        f"+{cfg.add3_trigger_pct:.1f}% → 3차"
+    )
+    st.write(
+        f"신규매수 마감 {cfg.last_entry_time} / 강제청산 {cfg.force_exit_time}"
+    )
+
+    if leader_for_trade.empty:
+        st.warning("먼저 `👑 대장주 TOP 5 계산`을 실행해야 자동매매 후보가 생깁니다.")
+
+    current_state = load_state()
+    st.caption(
+        f"오늘 자동매매 상태: 추적 종목 {len(current_state.get('positions', {}))}개 · "
+        f"누적 신규매수 약 {int(current_state.get('daily_buy_amount', 0)):,}원 · "
+        f"주문 {int(current_state.get('daily_orders', 0))}회"
+    )
+
+    dry_run = st.toggle(
+        "🧪 주문 없이 자동매매 판단만 보기",
+        value=True,
+        help="켜져 있으면 실제 모의/실전 주문을 전송하지 않고 판단 결과만 기록합니다."
+    )
+
+    if env == "real":
+        st.error("실전 모드는 모의운용 검증 후에만 사용하세요.")
+        real_confirm = st.checkbox("실전 주문 위험을 이해했고 실제 주문 전송을 허용합니다.")
+    else:
+        real_confirm = True
+
+    can_execute = auto_on and live_unlocked and real_confirm
+
+    if not auto_on:
+        st.caption("자동매매는 OFF입니다. 분석/조회만 수행합니다.")
+    elif env == "real" and not live_unlocked:
+        st.error("실전 잠금이 해제되지 않아 주문을 실행하지 않습니다.")
+    else:
+        st.success("자동매매 설정 ON")
+
+    if st.button("▶️ 자동매매 1회 사이클 실행", type="primary"):
+        if not auto_on:
+            st.warning("왼쪽 설정에서 자동매매를 ON으로 먼저 바꿔주세요.")
+        elif leader_for_trade.empty:
+            st.warning("대장주 TOP5를 먼저 계산해주세요.")
+        elif env == "real" and not live_unlocked:
+            st.error("실전 잠금 상태입니다.")
+        else:
+            try:
+                cycle = run_domestic_cycle(
+                    client=client,
+                    leader_df=leader_for_trade,
+                    config=cfg,
+                    execute_orders=(can_execute and not dry_run),
+                )
+                st.session_state["last_cycle"] = cycle
+            except Exception as e:
+                st.error(f"자동매매 사이클 오류: {e}")
+
+    cycle = st.session_state.get("last_cycle")
+    if cycle:
+        if cycle.get("message"):
+            st.info(cycle["message"])
+        actions = cycle.get("actions", [])
+        if actions:
+            st.dataframe(pd.DataFrame(actions), use_container_width=True, hide_index=True)
+        else:
+            st.caption("이번 사이클에서 주문/가상주문 동작이 없었습니다.")
+
+    if st.button("♻️ 오늘 자동매매 상태 초기화"):
+        reset_today_state()
+        st.session_state.pop("last_cycle", None)
+        st.success("오늘 자동매매 상태를 초기화했습니다.")
+
+    st.warning(
+        "Streamlit 화면은 24시간 워커가 아닙니다. 현재 버튼은 한 번의 매매 판단 사이클만 실행합니다. "
+        "24시간 운용은 `worker.py`를 별도 상시 서버에서 실행해야 합니다."
+    )
 
 st.divider()
 st.subheader("🧾 최근 주문 로그")
