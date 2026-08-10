@@ -373,8 +373,8 @@ if st.button("🔎 18개 종목 자동 분석"):
         with st.spinner("18개 종목을 분석하고 있어요..."):
             for name, code in stock_list.items():
                 try:
-                scan_symbol = code + ".KS"
-                scan_df = load_data(scan_symbol, period=period)
+                    scan_symbol = code + ".KS"
+                    scan_df = load_data(scan_symbol, period=period)
 
                 if scan_df is None or len(scan_df) < 30:
                     continue
@@ -392,7 +392,7 @@ if st.button("🔎 18개 종목 자동 분석"):
                 buy_s, sell_s, net_s, signal_s, _, _ = score_latest(scan_d)
                 latest = scan_d.iloc[-1]
 
-                results.append({
+                    results.append({
                     "종목": name,
                     "종목코드": code,
                     "현재가": int(latest["Close"]),
@@ -402,7 +402,7 @@ if st.button("🔎 18개 종목 자동 분석"):
                     "매도점수": sell_s,
                     "순점수": net_s,
                     "종합신호": signal_s
-                })
+                    })
 
             except Exception:
                 continue
