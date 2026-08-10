@@ -8,6 +8,7 @@ from trader_core import (
 )
 from auto_engine import AutoConfig, run_domestic_cycle, load_state, reset_today_state
 from trend_strategy import score_leader_trend
+from ai_judge import analyze_market_with_ai, merge_ai_filter
 
 st.set_page_config(page_title="쏭 자동매매", page_icon="🤖", layout="wide")
 st.title("🤖 쏭 국내·미국 자동매매")
@@ -27,6 +28,14 @@ with st.sidebar:
         index=1,
         help="RSI/볼린저 기반 기존 전략과 VWAP·돌파·눌림 중심 추세전략을 선택합니다."
     )
+
+    ai_filter_on = st.toggle(
+        "🧠 AI 시장판단 필터",
+        value=False,
+        help="최신 뉴스/이슈를 AI가 확인해 규칙 기반 후보에 추가 위험 필터를 적용합니다."
+    )
+    ai_score_min = st.slider("AI 최소점수", 0, 100, 60, 5)
+    ai_conf_min = st.slider("AI 최소확신도", 0, 100, 55, 5)
 
     budget = st.number_input("1일 최대 신규매수 금액(원)", min_value=10000, value=300000, step=10000)
     per_stock = st.number_input("종목당 최대 금액(원)", min_value=10000, value=100000, step=10000)
@@ -236,6 +245,64 @@ st.info(
     f"강제청산 기준시각: {market_force_exit_time('KR' if market == '국내' else 'US')}"
 )
 
+
+st.divider()
+st.subheader("🧠 AI 시장판단 필터")
+st.caption(
+    "AI는 최신 공개 뉴스·이슈를 확인해 위험도를 평가하는 보조 필터입니다. "
+    "AI 단독으로 주문을 만들지 않으며, 손절·예산·보유한도 같은 숫자 규칙을 우회할 수 없습니다."
+)
+
+leader_for_ai = st.session_state.get("leader_df", pd.DataFrame())
+
+if ai_filter_on:
+    if leader_for_ai.empty:
+        st.warning("먼저 👑 대장주 TOP5를 계산해주세요.")
+    else:
+        if st.button("🧠 최신 뉴스·이슈 AI 판단"):
+            with st.spinner("AI가 최신 공개 뉴스와 후보 종목 이슈를 확인하고 있어요..."):
+                try:
+                    ai_result = analyze_market_with_ai(
+                        leader_for_ai,
+                        st.secrets,
+                        strategy_name=strategy_mode,
+                    )
+                    st.session_state["ai_result"] = ai_result
+                except Exception as e:
+                    st.session_state["ai_result"] = {
+                        "ok": False,
+                        "error": str(e),
+                    }
+
+        ai_result = st.session_state.get("ai_result")
+        if ai_result:
+            if not ai_result.get("ok"):
+                st.error(f"AI 판단 실패: {ai_result.get('error', '알 수 없는 오류')}")
+            else:
+                st.info(ai_result.get("market_summary", ""))
+                ai_filtered = merge_ai_filter(
+                    leader_for_ai,
+                    ai_result,
+                    min_ai_score=int(ai_score_min),
+                    min_confidence=int(ai_conf_min),
+                )
+                st.session_state["ai_filtered_leaders"] = ai_filtered
+
+                show_cols = [c for c in [
+                    "순위","종목코드","종목명","종합점수","판정",
+                    "AI판정","AI점수","AI확신도","AI통과","AI테마",
+                    "뉴스품질","AI이유","AI위험"
+                ] if c in ai_filtered.columns]
+                st.dataframe(
+                    ai_filtered[show_cols],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                passed = int(ai_filtered["AI통과"].sum()) if "AI통과" in ai_filtered.columns else 0
+                st.success(f"AI 추가 필터 통과: {passed}개")
+else:
+    st.caption("AI 필터 OFF — 기존 숫자 규칙만 사용합니다.")
+
 st.divider()
 st.subheader("🤖 자동매매 엔진 v3")
 
@@ -243,6 +310,14 @@ if market != "국내":
     st.info("미국 자동주문은 실시간 호가·체결 검증 모듈을 붙인 뒤 활성화합니다. 지금은 분석만 사용하세요.")
 else:
     leader_for_trade = st.session_state.get("leader_df", pd.DataFrame())
+    if ai_filter_on:
+        ai_filtered_for_trade = st.session_state.get("ai_filtered_leaders", pd.DataFrame())
+        if ai_filtered_for_trade.empty or "AI통과" not in ai_filtered_for_trade.columns:
+            leader_for_trade = pd.DataFrame()
+        else:
+            leader_for_trade = ai_filtered_for_trade[
+                ai_filtered_for_trade["AI통과"] == True
+            ].copy()
 
     cfg = AutoConfig(
         daily_budget=int(budget),
@@ -275,7 +350,10 @@ else:
     )
 
     if leader_for_trade.empty:
-        st.warning("먼저 `👑 대장주 TOP 5 계산`을 실행해야 자동매매 후보가 생깁니다.")
+        if ai_filter_on:
+            st.warning("대장주 TOP5 계산 후 AI 필터까지 통과한 후보가 있어야 자동매매 후보가 생깁니다.")
+        else:
+            st.warning("먼저 `👑 대장주 TOP 5 계산`을 실행해야 자동매매 후보가 생깁니다.")
 
     current_state = load_state()
     st.caption(
