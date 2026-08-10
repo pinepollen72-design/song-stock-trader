@@ -389,39 +389,40 @@ if st.button("🔎 18개 종목 자동 분석"):
                     if scan_d is None or len(scan_d) < 2:
                         continue
 
-                buy_s, sell_s, net_s, signal_s, _, _ = score_latest(scan_d)
-                latest = scan_d.iloc[-1]
+                    buy_s, sell_s, net_s, signal_s, _, _ = score_latest(scan_d)
+                    latest = scan_d.iloc[-1]
 
-                results.append({
-                    "종목": name,
-                    "종목코드": code,
-                    "현재가": int(latest["Close"]),
-                    "RSI": round(float(latest["RSI"]), 1),
-                    "거래량배수": round(float(latest["VOL_RATIO"]), 2),
-                    "매수점수": buy_s,
-                    "매도점수": sell_s,
-                    "순점수": net_s,
-                    "종합신호": signal_s
-                })
+                    results.append({
+                        "종목": name,
+                        "종목코드": code,
+                        "현재가": int(latest["Close"]),
+                        "RSI": round(float(latest["RSI"]), 1),
+                        "거래량배수": round(float(latest["VOL_RATIO"]), 2),
+                        "매수점수": buy_s,
+                        "매도점수": sell_s,
+                        "순점수": net_s,
+                        "종합신호": signal_s
+                    })
 
-            except Exception:
-                continue
-        result_df = pd.DataFrame(results)
+                except Exception:
+                    continue
+            if results:
+                result_df = pd.DataFrame(results)
 
-        result_df = result_df.sort_values(
-            by=["순점수", "매수점수", "거래량배수"],
-            ascending=[False, False, False]
-        )
+                result_df = result_df.sort_values(
+                    by=["순점수", "매수점수", "거래량배수"],
+                    ascending=[False, False, False]
+                )
 
-        st.success(f"✅ {len(result_df)}개 종목 분석 완료!")
+                st.success(f"✅ {len(result_df)}개 종목 분석 완료!")
 
-        st.subheader("🏆 단기매매 후보 순위")
+                st.subheader("🏆 단기매매 후보 순위")
 
-        st.dataframe(
-            result_df,
-            use_container_width=True,
-            hide_index=True
-        )
+                st.dataframe(
+                    result_df,
+                    use_container_width=True,
+                    hide_index=True
+                )
 
-    else:
-        st.warning("분석 가능한 종목 데이터를 가져오지 못했습니다.")
+            else:
+                st.warning("분석 가능한 종목 데이터를 가져오지 못했습니다.")
