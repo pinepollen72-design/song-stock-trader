@@ -7,6 +7,7 @@ from trader_core import (
     load_trade_log
 )
 from auto_engine import AutoConfig, run_domestic_cycle, load_state, reset_today_state
+from trend_strategy import score_leader_trend
 
 st.set_page_config(page_title="쏭 자동매매", page_icon="🤖", layout="wide")
 st.title("🤖 쏭 국내·미국 자동매매")
@@ -19,6 +20,13 @@ with st.sidebar:
     mode = st.radio("운용 모드", ["모의투자", "실전투자"], index=0)
     market = st.radio("시장", ["국내", "미국"], horizontal=True)
     auto_on = st.toggle("🤖 자동매매 ON", value=False)
+
+    strategy_mode = st.selectbox(
+        "매매 전략",
+        ["기존 기술지표 모드", "대장주 추세매매 모드"],
+        index=1,
+        help="RSI/볼린저 기반 기존 전략과 VWAP·돌파·눌림 중심 추세전략을 선택합니다."
+    )
 
     budget = st.number_input("1일 최대 신규매수 금액(원)", min_value=10000, value=300000, step=10000)
     per_stock = st.number_input("종목당 최대 금액(원)", min_value=10000, value=100000, step=10000)
@@ -110,10 +118,24 @@ if market == "국내":
                 if tech:
                     lead = float(r.get("주도주점수", 0))
                     net = int(tech.get("순점수", 0))
-
-                    # 기술 순점수 -6~+6을 0~100 범위로 보수적으로 환산
                     tech100 = max(0.0, min(100.0, ((net + 6) / 12) * 100))
-                    combined = lead * 0.65 + tech100 * 0.35
+
+                    trend = None
+                    try:
+                        from trader_core import _download_yf
+                        intraday_df = _download_yf(code, "국내")
+                        trend = score_leader_trend(intraday_df)
+                    except Exception:
+                        trend = None
+
+                    trend_score = float((trend or {}).get("추세점수", 0))
+
+                    if strategy_mode == "대장주 추세매매 모드":
+                        combined = lead * 0.45 + trend_score * 0.55
+                        final_signal = (trend or {}).get("추세판정", "⚪ 추세약함")
+                    else:
+                        combined = lead * 0.65 + tech100 * 0.35
+                        final_signal = tech.get("종합신호")
 
                     rows.append({
                         "종목코드": code,
@@ -126,8 +148,15 @@ if market == "국내":
                         "매수점수": tech.get("매수점수"),
                         "매도점수": tech.get("매도점수"),
                         "기술순점수": net,
+                        "추세점수": round(trend_score, 1),
+                        "VWAP": (trend or {}).get("VWAP"),
+                        "VWAP괴리율": (trend or {}).get("VWAP괴리율"),
+                        "당일고가거리": (trend or {}).get("당일고가거리"),
+                        "돌파": (trend or {}).get("돌파"),
+                        "눌림재상승": (trend or {}).get("눌림재상승"),
                         "종합점수": round(combined, 1),
-                        "판정": tech.get("종합신호"),
+                        "판정": final_signal,
+                        "진입근거": (trend or {}).get("추세이유", "") if strategy_mode == "대장주 추세매매 모드" else tech.get("종합신호"),
                     })
 
                 progress.progress((i + 1) / total, text=f"{i+1}/{total} 분석 중")
@@ -225,11 +254,18 @@ else:
         stop_loss_pct=float(stop_loss),
         take1_pct=float(take1),
         take2_pct=float(take2),
+        min_combined_score=65.0 if strategy_mode == "기존 기술지표 모드" else 68.0,
+        require_green_signal=True,
     )
 
-    st.write(
-        f"진입 기준: 대장주 TOP5 + 🟢 매수 후보 + 종합점수 {cfg.min_combined_score:.0f}점 이상"
-    )
+    if strategy_mode == "대장주 추세매매 모드":
+        st.write(
+            f"진입 기준: 대장주 TOP5 + 🟢 추세매수 후보 + 종합점수 {cfg.min_combined_score:.0f}점 이상"
+        )
+    else:
+        st.write(
+            f"진입 기준: 대장주 TOP5 + 🟢 매수 후보 + 종합점수 {cfg.min_combined_score:.0f}점 이상"
+        )
     st.write(
         f"추가매수: 평균단가 대비 +{cfg.add2_trigger_pct:.1f}% → 2차, "
         f"+{cfg.add3_trigger_pct:.1f}% → 3차"
@@ -307,6 +343,18 @@ else:
         "Streamlit 화면은 24시간 워커가 아닙니다. 현재 버튼은 한 번의 매매 판단 사이클만 실행합니다. "
         "24시간 운용은 `worker.py`를 별도 상시 서버에서 실행해야 합니다."
     )
+
+st.divider()
+st.subheader("📒 자동 매매일지 미리보기")
+journal_df = st.session_state.get("leader_df", pd.DataFrame())
+if journal_df.empty:
+    st.caption("대장주 TOP5를 계산하면 VWAP·돌파·눌림·진입근거가 여기에 표시됩니다.")
+else:
+    cols = [c for c in [
+        "순위","종목코드","종목명","주도주점수","추세점수","VWAP","VWAP괴리율",
+        "당일고가거리","돌파","눌림재상승","종합점수","판정","진입근거"
+    ] if c in journal_df.columns]
+    st.dataframe(journal_df[cols], use_container_width=True, hide_index=True)
 
 st.divider()
 st.subheader("🧾 최근 주문 로그")
