@@ -1,4 +1,4 @@
-import streamlit as st
+해import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
@@ -76,6 +76,12 @@ def get_mock_balance():
     st.error("모의투자 잔고 조회 실패")
     st.write(response.text)
     return None
+if st.button("💰 모의투자 잔고 조회"):
+    balance = get_mock_balance()
+
+    if balance:
+        st.success("✅ 모의투자 잔고 조회 성공!")
+        st.json(balance)
 # -----------------------------
 # Data
 # -----------------------------
