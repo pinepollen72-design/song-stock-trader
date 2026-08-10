@@ -184,7 +184,16 @@ stock_code_test = stock_list[selected_stock]
 
 if st.button("📈 한국투자 현재가 조회"):
     price_data = get_kis_price(stock_code_test)
+if st.button("🧪 선택 종목 모의매수 1주"):
+    order_result = mock_buy_stock(stock_code_test, qty=1)
 
+    if order_result:
+        if order_result.get("rt_cd") == "0":
+            st.success(f"✅ {selected_stock} 1주 모의매수 주문 성공!")
+            st.json(order_result)
+        else:
+            st.error("모의매수 주문이 거절되었습니다.")
+            st.json(order_result)
     if price_data and price_data.get("output"):
         output = price_data["output"]
 
