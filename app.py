@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-
+import requests
+import json
 st.set_page_config(page_title="단기매매 신호 분석기", page_icon="📈", layout="wide")
 
 st.title("📈 볼린저 밴드 + 거래량 + 캔들 + RSI 단기매매 신호 분석기")
