@@ -86,7 +86,7 @@ st.divider()
 st.subheader("🔥 오늘의 후보 탐색")
 
 manual_text = st.text_input(
-    "직접 추가할 종목",
+    "추가 관심종목 입력 (선택사항)",
     placeholder="국내: 005930,000660 / 미국: AAPL,NVDA,TSLA"
 )
 manual_symbols = [x.strip().upper() for x in manual_text.split(",") if x.strip()]
@@ -96,7 +96,7 @@ if market == "국내":
         try:
             candidates = discover_domestic_candidates(client, top_n=20)
             st.session_state["candidates_kr"] = candidates
-            st.session_state.pop("leader_df", None)
+            st.session_state.pop("leader_df_kr", None)
         except Exception as e:
             st.error(f"후보 탐색 실패: {e}")
 
@@ -180,11 +180,11 @@ if market == "국내":
 
                 labels = ["👑 1위", "🥈 2위", "🥉 3위", "4위", "5위"]
                 leader_df.insert(0, "순위", labels[:len(leader_df)])
-                st.session_state["leader_df"] = leader_df
+                st.session_state["leader_df_kr"] = leader_df
             else:
                 st.warning("5분봉 기술분석 가능한 후보가 없었습니다.")
 
-        leader_df = st.session_state.get("leader_df", pd.DataFrame())
+        leader_df = st.session_state.get("leader_df_kr", pd.DataFrame())
         if not leader_df.empty:
             st.dataframe(leader_df, use_container_width=True, hide_index=True)
 
@@ -226,16 +226,60 @@ if st.button("후보 기술점수 계산"):
         )
         st.session_state["score_df"] = score_df
 
+        if market == "미국":
+            us_top = score_df.head(5).copy().reset_index(drop=True)
+
+            # 기존 기술 순점수를 0~100으로 보수적으로 환산하고
+            # 거래량은 작은 보조 가중치만 부여합니다.
+            tech100 = ((us_top["순점수"].clip(-6, 6) + 6) / 12 * 100).astype(float)
+            vol_bonus = (us_top["거래량배수"].clip(0, 2.0) / 2.0 * 10).astype(float)
+            us_top["종합점수"] = (tech100 * 0.9 + vol_bonus).round(1)
+
+            labels = ["⭐ 1위", "⭐ 2위", "⭐ 3위", "4위", "5위"]
+            us_top.insert(0, "순위", labels[:len(us_top)])
+            us_top["종목코드"] = us_top["종목"].astype(str)
+            us_top["종목명"] = us_top["종목"].astype(str)
+            us_top["판정"] = us_top["종합신호"]
+            us_top["진입근거"] = (
+                "RSI " + us_top["RSI"].astype(str)
+                + " / 거래량배수 " + us_top["거래량배수"].astype(str)
+                + " / 매수점수 " + us_top["매수점수"].astype(str)
+                + " / 매도점수 " + us_top["매도점수"].astype(str)
+            )
+            st.session_state["leader_df_us"] = us_top
+
 score_df = st.session_state.get("score_df", pd.DataFrame())
 if not score_df.empty:
     st.dataframe(score_df, use_container_width=True, hide_index=True)
-    st.subheader("⭐ 기술점수 TOP 5")
-    st.dataframe(score_df.head(5), use_container_width=True, hide_index=True)
+    if market == "미국":
+        st.subheader("🇺🇸 미국 기술·모멘텀 TOP 5")
+        us_show = st.session_state.get("leader_df_us", pd.DataFrame())
+        if not us_show.empty:
+            cols = [c for c in [
+                "순위","종목","현재가","RSI","거래량배수","매수점수",
+                "매도점수","순점수","종합점수","판정"
+            ] if c in us_show.columns]
+            st.dataframe(us_show[cols], use_container_width=True, hide_index=True)
+    else:
+        st.subheader("⭐ 기술점수 TOP 5")
+        st.dataframe(score_df.head(5), use_container_width=True, hide_index=True)
 
 st.divider()
 st.subheader("🧪 주문 계산 미리보기")
 parts = split_budget(per_stock, [b1, b2, b3])
-st.write(f"종목당 {per_stock:,}원 기준 → 1차 {parts[0]:,}원 / 2차 {parts[1]:,}원 / 3차 {parts[2]:,}원")
+
+if market == "국내":
+    st.write(
+        f"종목당 {per_stock:,}원 기준 → "
+        f"1차 {parts[0]:,}원 / 2차 {parts[1]:,}원 / 3차 {parts[2]:,}원"
+    )
+else:
+    st.info(
+        "🇺🇸 미국 모드에서는 현재 원화 분할금액을 자동 주문수량으로 사용하지 않습니다. "
+        "해외주식은 달러 가격·환율·1주 단위 주문 가능 여부를 별도로 확인한 뒤 주문합니다."
+    )
+    st.write("현재 단계: 미국 후보분석 → AI 필터 → 모의주문 연결 검증")
+
 st.write(f"손절 -{stop_loss:.1f}% / 1차 익절 +{take1:.1f}% / 2차 익절 +{take2:.1f}%")
 st.write("당일매매 규칙: 해당 시장 마감 전 남은 당일 포지션 전량 청산")
 
@@ -253,11 +297,19 @@ st.caption(
     "AI 단독으로 주문을 만들지 않으며, 손절·예산·보유한도 같은 숫자 규칙을 우회할 수 없습니다."
 )
 
-leader_for_ai = st.session_state.get("leader_df", pd.DataFrame())
+leader_for_ai = (
+    st.session_state.get("leader_df_kr", pd.DataFrame())
+    if market == "국내"
+    else st.session_state.get("leader_df_us", pd.DataFrame())
+)
 
 if ai_filter_on:
     if leader_for_ai.empty:
-        st.warning("먼저 👑 대장주 TOP5를 계산해주세요.")
+        st.warning(
+            "먼저 👑 대장주 TOP5를 계산해주세요."
+            if market == "국내"
+            else "먼저 미국 후보 기술점수를 계산해주세요."
+        )
     else:
         if st.button("🧠 최신 뉴스·이슈 AI 판단"):
             with st.spinner("AI가 최신 공개 뉴스와 후보 종목 이슈를 확인하고 있어요..."):
@@ -266,6 +318,7 @@ if ai_filter_on:
                         leader_for_ai,
                         st.secrets,
                         strategy_name=strategy_mode,
+                        market=market,
                     )
                     st.session_state["ai_result"] = ai_result
                 except Exception as e:
@@ -309,7 +362,11 @@ st.subheader("🤖 자동매매 엔진 v3")
 if market != "국내":
     st.info("미국 자동주문은 실시간 호가·체결 검증 모듈을 붙인 뒤 활성화합니다. 지금은 분석만 사용하세요.")
 else:
-    leader_for_trade = st.session_state.get("leader_df", pd.DataFrame())
+    leader_for_trade = (
+        st.session_state.get("leader_df_kr", pd.DataFrame())
+        if market == "국내"
+        else st.session_state.get("leader_df_us", pd.DataFrame())
+    )
     if ai_filter_on:
         ai_filtered_for_trade = st.session_state.get("ai_filtered_leaders", pd.DataFrame())
         if ai_filtered_for_trade.empty or "AI통과" not in ai_filtered_for_trade.columns:
@@ -383,8 +440,16 @@ else:
     else:
         st.success("자동매매 설정 ON")
 
+    if market == "미국":
+        st.info(
+            "🇺🇸 미국 자동주문 엔진은 아직 안전 연결 전입니다. "
+            "현재는 후보분석과 AI 필터까지만 사용하세요."
+        )
+
     if st.button("▶️ 자동매매 1회 사이클 실행", type="primary"):
-        if not auto_on:
+        if market == "미국":
+            st.warning("미국 자동주문은 아직 비활성화되어 있습니다. 모의주문 연결 검증 후 열겠습니다.")
+        elif not auto_on:
             st.warning("왼쪽 설정에서 자동매매를 ON으로 먼저 바꿔주세요.")
         elif leader_for_trade.empty:
             st.warning("대장주 TOP5를 먼저 계산해주세요.")
@@ -424,7 +489,11 @@ else:
 
 st.divider()
 st.subheader("📒 자동 매매일지 미리보기")
-journal_df = st.session_state.get("leader_df", pd.DataFrame())
+journal_df = (
+    st.session_state.get("leader_df_kr", pd.DataFrame())
+    if market == "국내"
+    else st.session_state.get("leader_df_us", pd.DataFrame())
+)
 if journal_df.empty:
     st.caption("대장주 TOP5를 계산하면 VWAP·돌파·눌림·진입근거가 여기에 표시됩니다.")
 else:

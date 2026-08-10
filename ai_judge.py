@@ -35,6 +35,7 @@ def analyze_market_with_ai(
     leader_df: pd.DataFrame,
     secrets,
     strategy_name: str = "대장주 추세매매 모드",
+    market: str = "국내",
 ) -> Dict[str, Any]:
     """
     AI는 뉴스/공시/시장 맥락을 요약하고 후보를 '추가 필터'합니다.
@@ -62,7 +63,7 @@ def analyze_market_with_ai(
 
     prompt = f"""
 당신은 한국 주식 단기매매용 '시장 맥락 위험 필터'입니다.
-전략명: {strategy_name}
+시장: {market}\n전략명: {strategy_name}
 
 아래 후보들은 이미 거래대금/거래량/추세 규칙을 통과해 선별된 후보입니다.
 당신은 최신 공개 웹 정보를 확인해서 각 종목의 당일/최근 이슈의 질과 위험도를 평가하세요.
@@ -83,7 +84,7 @@ def analyze_market_with_ai(
   "market_summary": "오늘 시장/테마 맥락 2~4문장",
   "candidates": [
     {{
-      "code": "6자리 종목코드",
+      "code": "국내는 6자리 종목코드, 미국은 티커",
       "name": "종목명",
       "verdict": "ALLOW|CAUTION|BLOCK",
       "ai_score": 0,
@@ -123,7 +124,7 @@ ai_score와 confidence는 0~100 정수입니다.
             confidence = 0
 
         clean_rows.append({
-            "종목코드": str(r.get("code", "")).zfill(6),
+            "종목코드": str(r.get("code", "")).upper(),
             "AI판정": verdict,
             "AI점수": ai_score,
             "AI확신도": confidence,
@@ -159,7 +160,16 @@ def merge_ai_filter(
         out["AI판정"] = "UNAVAILABLE"
         return out
 
-    out["종목코드"] = out["종목코드"].astype(str).str.zfill(6)
+    out["종목코드"] = out["종목코드"].astype(str).str.upper()
+    ai_df["종목코드"] = ai_df["종목코드"].astype(str).str.upper()
+
+    # 숫자형 국내 종목코드만 6자리로 맞추고, 미국 티커는 그대로 둡니다.
+    out["종목코드"] = out["종목코드"].apply(
+        lambda x: x.zfill(6) if x.isdigit() else x
+    )
+    ai_df["종목코드"] = ai_df["종목코드"].apply(
+        lambda x: x.zfill(6) if x.isdigit() else x
+    )
     out = out.merge(ai_df, how="left", on="종목코드")
     out["AI통과"] = (
         (out["AI판정"] == "ALLOW")
