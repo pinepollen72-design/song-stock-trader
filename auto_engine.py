@@ -499,3 +499,81 @@ def run_domestic_cycle(
     save_state(state)
     result["state"] = state
     return result
+def run_overseas_cycle(
+    client,
+    leader_df: pd.DataFrame,
+    config: AutoConfig,
+    execute_orders: bool = False,
+) -> Dict[str, Any]:
+    """
+    미국주식 자동매매 1회 사이클.
+    기본값은 모의 실행(DRY)이며 execute_orders=True일 때만 주문합니다.
+    """
+    result = {
+        "time": _now().isoformat(timespec="seconds"),
+        "execute_orders": execute_orders,
+        "actions": [],
+    }
+
+    if leader_df is None or leader_df.empty:
+        result["message"] = "미국 매매 후보가 없습니다."
+        return result
+
+    for _, row in leader_df.head(5).iterrows():
+        symbol = str(row.get("종목코드", row.get("종목", ""))).strip()
+
+        if not symbol:
+            continue
+
+        try:
+            price = float(row.get("현재가", 0))
+            score = float(row.get("종합점수", 0))
+        except (TypeError, ValueError):
+            continue
+
+        if price <= 0:
+            continue
+
+        if score < config.min_combined_score:
+            continue
+
+        qty = 1
+
+        if not execute_orders:
+            result["actions"].append({
+                "symbol": symbol,
+                "action": "DRY_BUY",
+                "qty": qty,
+                "price": price,
+                "score": score,
+            })
+            continue
+
+        try:
+            res = client.overseas_order_us(
+                symbol=symbol,
+                qty=qty,
+                side="buy",
+                limit_price=price,
+                exchange="NASD",
+            )
+
+            result["actions"].append({
+                "symbol": symbol,
+                "action": "BUY",
+                "qty": qty,
+                "price": price,
+                "response": str(res),
+            })
+
+        except Exception as e:
+            result["actions"].append({
+                "symbol": symbol,
+                "action": "ERROR",
+                "error": str(e),
+            })
+
+    if not result["actions"]:
+        result["message"] = "조건을 통과한 미국 매수 후보가 없습니다."
+
+    return result    
