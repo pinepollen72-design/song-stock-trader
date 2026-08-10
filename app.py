@@ -15,7 +15,7 @@ st.title("🤖 쏭 국내·미국 자동매매")
 st.caption("모의투자 테스트")
 
 settings = Settings.from_env()
-
+cfg = AutoConfig()
 with st.sidebar:
     st.header("⚙️ 운용 설정")
     mode = st.radio("운용 모드", ["모의투자", "실전투자"], index=0)
