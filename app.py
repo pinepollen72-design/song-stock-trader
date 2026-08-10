@@ -113,11 +113,10 @@ def get_kis_price(stock_code):
     st.error("현재가 조회 실패")
     st.write(response.text)
     return None
-    stock_code_test = st.text_input(
+stock_code_test = st.text_input(
     "🔎 현재가 조회 테스트 종목코드",
     value="005930"
 )
-
 if st.button("📈 한국투자 현재가 조회"):
     price_data = get_kis_price(stock_code_test)
 
