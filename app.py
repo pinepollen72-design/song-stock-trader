@@ -368,4 +368,62 @@ st.caption("주의: 이 프로그램은 기술적 지표를 조합한 교육·�
 st.subheader("🚀 자동 종목 스캐너")
 
 if st.button("🔎 18개 종목 자동 분석"):
-    st.info("자동 분석 기능을 준비 중입니다.")
+        results = []
+
+    with st.spinner("18개 종목을 분석하고 있어요..."):
+        for name, code in stock_list.items():
+            try:
+                scan_symbol = code + ".KS"
+                scan_df = load_data(scan_symbol, period=period)
+
+                if scan_df is None or len(scan_df) < 30:
+                    continue
+
+                scan_d = indicators(
+                    scan_df,
+                    bb_period,
+                    bb_std,
+                    rsi_period
+                )
+
+                if scan_d is None or len(scan_d) < 2:
+                    continue
+
+                buy_s, sell_s, net_s, signal_s, _, _ = score_latest(scan_d)
+                latest = scan_d.iloc[-1]
+
+                results.append({
+                    "종목": name,
+                    "종목코드": code,
+                    "현재가": int(latest["Close"]),
+                    "RSI": round(float(latest["RSI"]), 1),
+                    "거래량배수": round(float(latest["VOL_RATIO"]), 2),
+                    "매수점수": buy_s,
+                    "매도점수": sell_s,
+                    "순점수": net_s,
+                    "종합신호": signal_s
+                })
+
+            except Exception:
+                continue
+
+    if results:
+        result_df = pd.DataFrame(results)
+
+        result_df = result_df.sort_values(
+            by=["순점수", "매수점수", "거래량배수"],
+            ascending=[False, False, False]
+        )
+
+        st.success(f"✅ {len(result_df)}개 종목 분석 완료!")
+
+        st.subheader("🏆 단기매매 후보 순위")
+
+        st.dataframe(
+            result_df,
+            use_container_width=True,
+            hide_index=True
+        )
+
+    else:
+        st.warning("분석 가능한 종목 데이터를 가져오지 못했습니다.")
