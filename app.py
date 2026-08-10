@@ -82,6 +82,55 @@ if st.button("💰 모의투자 잔고 조회"):
     if balance:
         st.success("✅ 모의투자 잔고 조회 성공!")
         st.json(balance)
+
+# 한국투자증권 국내주식 현재가 조회
+def get_kis_price(stock_code):
+    token = get_kis_token()
+
+    if not token:
+        return None
+
+    url = "https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price"
+
+    headers = {
+        "content-type": "application/json",
+        "authorization": f"Bearer {token}",
+        "appkey": st.secrets["KIS_APP_KEY"],
+        "appsecret": st.secrets["KIS_APP_SECRET"],
+        "tr_id": "FHKST01010100"
+    }
+
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_INPUT_ISCD": stock_code
+    }
+
+    response = requests.get(url, headers=headers, params=params)
+
+    if response.status_code == 200:
+        return response.json()
+
+    st.error("현재가 조회 실패")
+    st.write(response.text)
+    return None
+    stock_code_test = st.text_input(
+    "🔎 현재가 조회 테스트 종목코드",
+    value="005930"
+)
+
+if st.button("📈 한국투자 현재가 조회"):
+    price_data = get_kis_price(stock_code_test)
+
+    if price_data and price_data.get("output"):
+        output = price_data["output"]
+
+        st.success("✅ 현재가 조회 성공!")
+        st.metric(
+            "현재가",
+            f'{int(output["stck_prpr"]):,}원'
+        )
+    else:
+        st.error("현재가 데이터를 가져오지 못했습니다.")
 # -----------------------------
 # Data
 # -----------------------------
