@@ -423,6 +423,11 @@ if st.button("🔎 18개 종목 자동 분석"):
                     use_container_width=True,
                     hide_index=True
                 )
+                st.subheader("⭐ 오늘의 단기매매 TOP 5")
+
+                top5_df = result_df.head(5)
+
+                st.dataframe(top5_df, use_container_width=True, hide_index=True)
 
             else:
                 st.warning("분석 가능한 종목 데이터를 가져오지 못했습니다.")
