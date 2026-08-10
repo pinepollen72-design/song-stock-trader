@@ -364,7 +364,7 @@ st.dataframe(show.style.format({
     "RSI":"{:.1f}", "거래량배수":"{:.2f}"
 }), use_container_width=True)
 
-st.caption("주의: 이 프로그램은 기술적 지표를 조합한 교육·분석용 예시입니다. 슬리피지, 수수료, 세금, 급등락, 뉴스/공시 등을 반영하지 않으며 실제 자동주문 기능은 포함하지 st.divider()
+st.caption("주의: 이 프로그램은 기술적 지표를 조합한 교육·분석용 도구입니다.")
 st.subheader("🚀 자동 종목 스캐너")
 
 if st.button("🔎 18개 종목 자동 분석"):
