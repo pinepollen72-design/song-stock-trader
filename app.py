@@ -279,7 +279,7 @@ def score_latest(d):
 # Sidebar
 # -----------------------------
 st.sidebar.header("⚙️ 설정")
-symbol = st.sidebar.text_input("종목 코드", value="005930.KS", help="예: 삼성전자 005930.KS / SK하이닉스 000660.KS")
+symbol = stock_code_test + ".KS"
 period = st.sidebar.selectbox("조회 기간", ["3mo", "6mo", "1y", "2y"], index=1)
 bb_period = st.sidebar.number_input("볼린저 기간", 5, 100, 20)
 bb_std = st.sidebar.number_input("표준편차 배수", 0.5, 4.0, 2.0, 0.1)
