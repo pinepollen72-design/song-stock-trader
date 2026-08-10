@@ -113,6 +113,46 @@ def get_kis_price(stock_code):
     st.error("현재가 조회 실패")
     st.write(response.text)
     return None
+
+# 한국투자증권 모의투자 국내주식 매수
+def mock_buy_stock(stock_code, qty=1):
+    token = get_kis_token()
+
+    if not token:
+        return None
+
+    url = "https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/order-cash"
+
+    headers = {
+        "content-type": "application/json; charset=utf-8",
+        "authorization": f"Bearer {token}",
+        "appkey": st.secrets["KIS_APP_KEY"],
+        "appsecret": st.secrets["KIS_APP_SECRET"],
+        "tr_id": "VTTC0802U",
+        "custtype": "P"
+    }
+
+    body = {
+        "CANO": st.secrets["KIS_ACCOUNT_NO"],
+        "ACNT_PRDT_CD": st.secrets["KIS_ACCOUNT_PRODUCT_CODE"],
+        "PDNO": stock_code,
+        "ORD_DVSN": "01",
+        "ORD_QTY": str(qty),
+        "ORD_UNPR": "0"
+    }
+
+    response = requests.post(
+        url,
+        headers=headers,
+        data=json.dumps(body)
+    )
+
+    if response.status_code == 200:
+        return response.json()
+
+    st.error("모의매수 주문 요청 실패")
+    st.write(response.text)
+    return None
 stock_list = {
     "삼성전자": "005930",
     "SK하이닉스": "000660",
