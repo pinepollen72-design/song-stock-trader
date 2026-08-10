@@ -6,7 +6,7 @@ from trader_core import (
     score_ticker, split_budget, is_market_open, market_force_exit_time,
     load_trade_log
 )
-from auto_engine import AutoConfig, run_domestic_cycle, load_state, reset_today_state
+from auto_engine import AutoConfig, run_domestic_cycle, run_overseas_cycle, load_state, reset_today_state
 from trend_strategy import score_leader_trend
 from ai_judge import analyze_market_with_ai, merge_ai_filter
 
@@ -514,3 +514,54 @@ if log.empty:
     st.caption("아직 저장된 주문 로그가 없습니다.")
 else:
     st.dataframe(log.tail(100), use_container_width=True, hide_index=True)
+st.divider()
+st.subheader("🇺🇸 미국 모의 자동매매 테스트")
+
+if market == "미국":
+    us_leader = st.session_state.get("leader_df_us", pd.DataFrame())
+
+    if mode != "모의투자":
+        st.warning("⚠️ 이 테스트는 모의투자에서만 실행됩니다.")
+
+    elif us_leader.empty:
+        st.warning("먼저 🇺🇸 미국 후보 기술점수를 계산해주세요.")
+
+    else:
+        st.caption("조건을 통과한 미국 후보에 대해 모의계좌 주문을 테스트합니다.")
+
+        if st.button("▶️ 미국 모의자동매매 1회 실행", type="primary"):
+            if not auto_on:
+                st.warning("왼쪽 설정에서 🤖 자동매매 ON을 먼저 켜주세요.")
+            else:
+                try:
+                    us_cycle = run_overseas_cycle(
+                        client=client,
+                        leader_df=us_leader,
+                        config=cfg,
+                        execute_orders=True,
+                    )
+
+                    st.session_state["last_us_cycle"] = us_cycle
+                    st.success("🇺🇸 미국 모의자동매매 1회 사이클 실행 완료")
+
+                except Exception as e:
+                    st.error(f"미국 모의자동매매 오류: {e}")
+
+        us_cycle = st.session_state.get("last_us_cycle")
+
+        if us_cycle:
+            if us_cycle.get("message"):
+                st.info(us_cycle["message"])
+
+            actions = us_cycle.get("actions", [])
+
+            if actions:
+                st.dataframe(
+                    pd.DataFrame(actions),
+                    use_container_width=True,
+                )
+            else:
+                st.caption("이번 사이클에서는 주문 조건을 통과한 종목이 없습니다.")
+
+else:
+    st.caption("미국 시장을 선택하면 미국 모의자동매매 테스트 버튼이 표시됩니다.")    
