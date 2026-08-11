@@ -558,14 +558,20 @@ def run_overseas_cycle(
                 exchange="NASD",
             )
 
-            result["actions"].append({
-                "symbol": symbol,
-                "action": "BUY",
-                "qty": qty,
-                "price": price,
-                "response": str(res),
-            })
+            if str(res.get("rt_cd", "")) == "0":
+    action = "BUY"
+else:
+    action = "REJECT"
 
+result["actions"].append({
+    "symbol": symbol,
+    "action": action,
+    "qty": qty,
+    "price": price,
+    "msg_cd": res.get("msg_cd", ""),
+    "msg1": res.get("msg1", ""),
+    "response": str(res),
+})
         except Exception as e:
             result["actions"].append({
                 "symbol": symbol,
