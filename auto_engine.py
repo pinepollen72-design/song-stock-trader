@@ -559,9 +559,9 @@ def run_overseas_cycle(
             )
 
             if str(res.get("rt_cd", "")) == "0":
-    action = "BUY"
-else:
-    action = "REJECT"
+                action = "BUY"
+            else:
+                action = "REJECT"
 
 result["actions"].append({
     "symbol": symbol,
