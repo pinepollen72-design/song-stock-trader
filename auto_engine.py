@@ -144,10 +144,6 @@ def _split_amounts(config: AutoConfig):
 
 
 def _parse_domestic_holdings(balance_json: Dict[str, Any]) -> pd.DataFrame:
-    """
-    KIS 잔고 output1을 자동매매 공통 컬럼으로 정리.
-    trader_core 버전 차이에 영향받지 않도록 이 파일 안에서 처리.
-    """
     rows = (balance_json or {}).get("output1", []) or []
     if not rows:
         return pd.DataFrame(
@@ -172,26 +168,19 @@ def _parse_domestic_holdings(balance_json: Dict[str, Any]) -> pd.DataFrame:
     out["종목코드"] = df[code].astype(str).str.zfill(6) if code else ""
     out["종목명"] = df[name].astype(str) if name else ""
     out["보유수량"] = (
-        pd.to_numeric(df[qty], errors="coerce").fillna(0).astype(int)
-        if qty else 0
+        pd.to_numeric(df[qty], errors="coerce").fillna(0).astype(int) if qty else 0
     )
     out["평균매입가"] = (
-        pd.to_numeric(df[avg], errors="coerce").fillna(0.0)
-        if avg else 0.0
+        pd.to_numeric(df[avg], errors="coerce").fillna(0.0) if avg else 0.0
     )
     out["현재가"] = (
-        pd.to_numeric(df[cur], errors="coerce").fillna(0.0)
-        if cur else 0.0
+        pd.to_numeric(df[cur], errors="coerce").fillna(0.0) if cur else 0.0
     )
 
     return out[out["보유수량"] > 0].reset_index(drop=True)
 
 
 def _domestic_balance(client):
-    """
-    최신 trader_core에 domestic_balance()가 있으면 사용.
-    없으면 KISClient.get()을 이용해 직접 조회하여 구버전과도 호환.
-    """
     if hasattr(client, "domestic_balance"):
         return client.domestic_balance()
 
@@ -212,7 +201,7 @@ def _domestic_balance(client):
             "PRCS_DVSN": "00",
             "CTX_AREA_FK100": "",
             "CTX_AREA_NK100": "",
-        }
+        },
     )
 
 
@@ -251,12 +240,7 @@ def _place_order(client, state, symbol, side, qty, reason, execute_orders):
 
     if _order_ok(res):
         state["daily_orders"] += 1
-        _event(
-            state,
-            f"{side.upper()}_ORDER",
-            symbol,
-            f"{qty}주 · {reason} · {res}",
-        )
+        _event(state, f"{side.upper()}_ORDER", symbol, f"{qty}주 · {reason} · {res}")
         return {"status": "ORDERED", "qty": qty, "response": res}
 
     _event(state, "ORDER_REJECT", symbol, str(res))
@@ -269,16 +253,6 @@ def run_domestic_cycle(
     config: AutoConfig,
     execute_orders: bool = False,
 ) -> Dict[str, Any]:
-    """
-    국내 자동매매 1회 사이클.
-
-    - 프로그램이 오늘 추적한 종목만 자동매도
-    - 기존 보유주는 건드리지 않음
-    - 14:50 이후 신규매수 금지
-    - 15:15 이후 추적 포지션 전량청산 시도
-    - 손절/익절 우선
-    - 신규매수는 대장주 TOP5 중 녹색 매수 후보 + 종합점수 기준 통과 종목만
-    """
     state = load_state()
     now = _now()
 
@@ -302,7 +276,6 @@ def run_domestic_cycle(
     holdings, holdings_df = _actual_holdings_map(client)
     result["holdings"] = holdings_df.to_dict("records")
 
-    # 기존 봇 추적 포지션 관리
     for symbol, pos in list(state["positions"].items()):
         actual = holdings.get(symbol, {})
         actual_qty = int(actual.get("qty", 0))
@@ -378,10 +351,7 @@ def run_domestic_cycle(
 
         if stage == 1 and pnl >= config.add2_trigger_pct:
             qty = _calc_qty(parts[1], price)
-            if (
-                qty > 0
-                and state["daily_buy_amount"] + qty * price <= config.daily_budget
-            ):
+            if qty > 0 and state["daily_buy_amount"] + qty * price <= config.daily_budget:
                 act = _place_order(
                     client, state, symbol, "buy", qty,
                     f"2차 분할매수 +{pnl:.2f}%", execute_orders
@@ -396,10 +366,7 @@ def run_domestic_cycle(
 
         if stage == 2 and pnl >= config.add3_trigger_pct:
             qty = _calc_qty(parts[2], price)
-            if (
-                qty > 0
-                and state["daily_buy_amount"] + qty * price <= config.daily_budget
-            ):
+            if qty > 0 and state["daily_buy_amount"] + qty * price <= config.daily_budget:
                 act = _place_order(
                     client, state, symbol, "buy", qty,
                     f"3차 분할매수 +{pnl:.2f}%", execute_orders
@@ -444,10 +411,8 @@ def run_domestic_cycle(
 
         if config.require_green_signal and "매수 후보" not in signal:
             continue
-
         if combined < config.min_combined_score:
             continue
-
         if symbol in holdings:
             continue
 
@@ -467,7 +432,6 @@ def run_domestic_cycle(
         cost = int(qty * price)
         if state["daily_buy_amount"] + cost > config.daily_budget:
             continue
-
         if state["daily_orders"] >= config.max_daily_orders:
             break
 
@@ -476,9 +440,7 @@ def run_domestic_cycle(
             f"1차 분할매수 · 종합점수 {combined:.1f} · {signal}",
             execute_orders,
         )
-        result["actions"].append(
-            {"symbol": symbol, "action": "BUY1", **act}
-        )
+        result["actions"].append({"symbol": symbol, "action": "BUY1", **act})
 
         if act["status"] in ("ORDERED", "DRY"):
             state["positions"][symbol] = {
@@ -499,16 +461,15 @@ def run_domestic_cycle(
     save_state(state)
     result["state"] = state
     return result
+
+
 def run_overseas_cycle(
     client,
     leader_df: pd.DataFrame,
     config: AutoConfig,
     execute_orders: bool = False,
 ) -> Dict[str, Any]:
-    """
-    미국주식 자동매매 1회 사이클.
-    기본값은 모의 실행(DRY)이며 execute_orders=True일 때만 주문합니다.
-    """
+    """미국주식 자동매매 1회 사이클."""
     result = {
         "time": _now().isoformat(timespec="seconds"),
         "execute_orders": execute_orders,
@@ -521,7 +482,6 @@ def run_overseas_cycle(
 
     for _, row in leader_df.head(5).iterrows():
         symbol = str(row.get("종목코드", row.get("종목", ""))).strip()
-
         if not symbol:
             continue
 
@@ -531,10 +491,7 @@ def run_overseas_cycle(
         except (TypeError, ValueError):
             continue
 
-        if price <= 0:
-            continue
-
-        if score < config.min_combined_score:
+        if price <= 0 or score < config.min_combined_score:
             continue
 
         qty = 1
@@ -563,15 +520,16 @@ def run_overseas_cycle(
             else:
                 action = "REJECT"
 
-result["actions"].append({
-    "symbol": symbol,
-    "action": action,
-    "qty": qty,
-    "price": price,
-    "msg_cd": res.get("msg_cd", ""),
-    "msg1": res.get("msg1", ""),
-    "response": str(res),
-})
+            result["actions"].append({
+                "symbol": symbol,
+                "action": action,
+                "qty": qty,
+                "price": price,
+                "msg_cd": res.get("msg_cd", ""),
+                "msg1": res.get("msg1", ""),
+                "response": str(res),
+            })
+
         except Exception as e:
             result["actions"].append({
                 "symbol": symbol,
@@ -582,4 +540,4 @@ result["actions"].append({
     if not result["actions"]:
         result["message"] = "조건을 통과한 미국 매수 후보가 없습니다."
 
-    return result    
+    return result
