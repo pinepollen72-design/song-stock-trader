@@ -6,93 +6,147 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, time as dtime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
-import numpy as np
 import pandas as pd
 import requests
 
-TOKEN_DIR = Path(os.getenv("SONG_TRADER_STATE_DIR", "/tmp/song_trader"))
-TOKEN_DIR.mkdir(parents=True, exist_ok=True)
-TRADE_LOG = TOKEN_DIR / "trade_log.csv"
+
+KST = ZoneInfo("Asia/Seoul")
+ET = ZoneInfo("America/New_York")
+
+STATE_DIR = Path(os.getenv("SONG_TRADER_STATE_DIR", "/tmp/song_trader"))
+STATE_DIR.mkdir(parents=True, exist_ok=True)
+TRADE_LOG_FILE = STATE_DIR / "trade_log.jsonl"
+
+
+# =========================================================
+# 환경 설정
+# =========================================================
+def _env(name: str, default: str = "") -> str:
+    return str(os.getenv(name, default) or "").strip()
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = _env(name, "true" if default else "false").lower()
+    return raw in ("1", "true", "yes", "on")
 
 
 @dataclass
 class Settings:
-    paper_app_key: str
-    paper_app_secret: str
-    paper_account_no: str
-    paper_account_product_code: str
+    paper_app_key: str = ""
+    paper_app_secret: str = ""
+    paper_account_no: str = ""
+    paper_account_product_code: str = "01"
+
     live_app_key: str = ""
     live_app_secret: str = ""
     live_account_no: str = ""
     live_account_product_code: str = "01"
+
     allow_live: bool = False
-    live_unlock_phrase: str = "LIVE-TRADING-UNLOCK"
+    live_unlock_phrase: str = "I-UNDERSTAND-LIVE-ORDERS"
 
     @classmethod
-    def from_streamlit(cls, secrets):
-        def g(name, default=""):
-            try:
-                return str(secrets.get(name, default))
-            except Exception:
-                return default
-
-        def gb(name, default=False):
-            v = g(name, str(default))
-            return str(v).lower() in ("1", "true", "yes", "on")
-
+    def from_env(cls) -> "Settings":
         return cls(
-            paper_app_key=g("KIS_PAPER_APP_KEY", g("KIS_APP_KEY")),
-            paper_app_secret=g("KIS_PAPER_APP_SECRET", g("KIS_APP_SECRET")),
-            paper_account_no=g("KIS_PAPER_ACCOUNT_NO", g("KIS_ACCOUNT_NO")),
-            paper_account_product_code=g(
+            paper_app_key=_env("KIS_PAPER_APP_KEY", _env("KIS_APP_KEY")),
+            paper_app_secret=_env("KIS_PAPER_APP_SECRET", _env("KIS_APP_SECRET")),
+            paper_account_no=_env("KIS_PAPER_ACCOUNT_NO", _env("KIS_ACCOUNT_NO")),
+            paper_account_product_code=_env(
                 "KIS_PAPER_ACCOUNT_PRODUCT_CODE",
-                g("KIS_ACCOUNT_PRODUCT_CODE", "01"),
+                _env("KIS_ACCOUNT_PRODUCT_CODE", "01"),
             ),
-            live_app_key=g("KIS_LIVE_APP_KEY"),
-            live_app_secret=g("KIS_LIVE_APP_SECRET"),
-            live_account_no=g("KIS_LIVE_ACCOUNT_NO"),
-            live_account_product_code=g("KIS_LIVE_ACCOUNT_PRODUCT_CODE", "01"),
-            allow_live=gb("ALLOW_LIVE_TRADING", False),
-            live_unlock_phrase=g("LIVE_UNLOCK_PHRASE", "LIVE-TRADING-UNLOCK"),
+            live_app_key=_env("KIS_LIVE_APP_KEY"),
+            live_app_secret=_env("KIS_LIVE_APP_SECRET"),
+            live_account_no=_env("KIS_LIVE_ACCOUNT_NO"),
+            live_account_product_code=_env(
+                "KIS_LIVE_ACCOUNT_PRODUCT_CODE",
+                "01",
+            ),
+            allow_live=_env_bool("ALLOW_LIVE_TRADING", False),
+            live_unlock_phrase=_env(
+                "LIVE_UNLOCK_PHRASE",
+                "I-UNDERSTAND-LIVE-ORDERS",
+            ),
         )
 
     @classmethod
-    def from_env(cls):
-        def g(name, default=""):
-            return os.getenv(name, default)
+    def from_streamlit(cls) -> "Settings":
+        try:
+            import streamlit as st
 
-        def gb(name, default=False):
-            return g(name, str(default)).lower() in ("1", "true", "yes", "on")
+            def sget(name: str, default: str = "") -> str:
+                try:
+                    value = st.secrets.get(name, default)
+                except Exception:
+                    value = default
+                if value is None:
+                    value = default
+                return str(value).strip()
 
-        return cls(
-            paper_app_key=g("KIS_PAPER_APP_KEY", g("KIS_APP_KEY")),
-            paper_app_secret=g("KIS_PAPER_APP_SECRET", g("KIS_APP_SECRET")),
-            paper_account_no=g("KIS_PAPER_ACCOUNT_NO", g("KIS_ACCOUNT_NO")),
-            paper_account_product_code=g(
-                "KIS_PAPER_ACCOUNT_PRODUCT_CODE",
-                g("KIS_ACCOUNT_PRODUCT_CODE", "01"),
-            ),
-            live_app_key=g("KIS_LIVE_APP_KEY"),
-            live_app_secret=g("KIS_LIVE_APP_SECRET"),
-            live_account_no=g("KIS_LIVE_ACCOUNT_NO"),
-            live_account_product_code=g("KIS_LIVE_ACCOUNT_PRODUCT_CODE", "01"),
-            allow_live=gb("ALLOW_LIVE_TRADING", False),
-            live_unlock_phrase=g("LIVE_UNLOCK_PHRASE", "LIVE-TRADING-UNLOCK"),
-        )
+            def sbool(name: str, default: bool = False) -> bool:
+                return sget(name, "true" if default else "false").lower() in (
+                    "1",
+                    "true",
+                    "yes",
+                    "on",
+                )
+
+            return cls(
+                paper_app_key=sget("KIS_PAPER_APP_KEY", sget("KIS_APP_KEY")),
+                paper_app_secret=sget(
+                    "KIS_PAPER_APP_SECRET",
+                    sget("KIS_APP_SECRET"),
+                ),
+                paper_account_no=sget(
+                    "KIS_PAPER_ACCOUNT_NO",
+                    sget("KIS_ACCOUNT_NO"),
+                ),
+                paper_account_product_code=sget(
+                    "KIS_PAPER_ACCOUNT_PRODUCT_CODE",
+                    sget("KIS_ACCOUNT_PRODUCT_CODE", "01"),
+                ),
+                live_app_key=sget("KIS_LIVE_APP_KEY"),
+                live_app_secret=sget("KIS_LIVE_APP_SECRET"),
+                live_account_no=sget("KIS_LIVE_ACCOUNT_NO"),
+                live_account_product_code=sget(
+                    "KIS_LIVE_ACCOUNT_PRODUCT_CODE",
+                    "01",
+                ),
+                allow_live=sbool("ALLOW_LIVE_TRADING", False),
+                live_unlock_phrase=sget(
+                    "LIVE_UNLOCK_PHRASE",
+                    "I-UNDERSTAND-LIVE-ORDERS",
+                ),
+            )
+        except Exception:
+            return cls.from_env()
 
 
+# =========================================================
+# KIS API 클라이언트
+# =========================================================
 class KISClient:
+    """
+    한국투자증권 REST API 공통 클라이언트.
+
+    이번 교체본의 핵심:
+    - 토큰 요청 read timeout 기본 45초
+    - 일반 API 요청 timeout 기본 30초
+    - 일반 조회 API는 일시적 네트워크 오류 시 최대 3회 재시도
+    - 토큰은 과도한 재발급을 피하기 위해 보수적으로 재시도
+    - 발급된 토큰은 메모리에 캐시
+    """
+
     def __init__(self, settings: Settings, env: str = "demo"):
-        if env not in ("demo", "real"):
-            raise ValueError("env must be demo or real")
-
         self.settings = settings
-        self.env = env
+        self.env = str(env or "demo").strip().lower()
+        if self.env not in ("demo", "real"):
+            self.env = "demo"
 
-        if env == "demo":
+        if self.env == "demo":
             self.base_url = "https://openapivts.koreainvestment.com:29443"
             self.app_key = settings.paper_app_key
             self.app_secret = settings.paper_app_secret
@@ -105,149 +159,264 @@ class KISClient:
             self.account_no = settings.live_account_no
             self.product_code = settings.live_account_product_code
 
-        if not self.app_key or not self.app_secret:
-            raise ValueError("해당 운용모드의 App Key/App Secret이 없습니다.")
+        self._token: Optional[str] = None
+        self._token_expires_at: float = 0.0
 
+        self.token_timeout = float(
+            os.getenv("KIS_TOKEN_TIMEOUT_SECONDS", "45")
+        )
+        self.api_timeout = float(
+            os.getenv("KIS_API_TIMEOUT_SECONDS", "30")
+        )
+        self.api_retries = max(
+            1,
+            int(os.getenv("KIS_API_RETRIES", "3")),
+        )
+
+        self.session = requests.Session()
+        self.session.headers.update(
+            {
+                "User-Agent": "song-stock-trader/1.0",
+                "Accept": "application/json",
+            }
+        )
+
+    def _validate_credentials(self) -> None:
+        missing = []
+        if not self.app_key:
+            missing.append("APP_KEY")
+        if not self.app_secret:
+            missing.append("APP_SECRET")
+        if missing:
+            raise RuntimeError(
+                f"KIS 인증정보가 비어 있습니다: {', '.join(missing)}"
+            )
+
+    def _validate_account(self) -> None:
         if not self.account_no:
-            raise ValueError("해당 운용모드의 계좌번호가 없습니다.")
+            raise RuntimeError("KIS 계좌번호가 비어 있습니다.")
+        if not self.product_code:
+            raise RuntimeError("KIS 계좌상품코드가 비어 있습니다.")
 
-    @property
-    def token_file(self) -> Path:
-        return TOKEN_DIR / f"token_{self.env}.json"
+    def get_token(self, force: bool = False) -> str:
+        self._validate_credentials()
 
-    def get_token(self) -> str:
         now = time.time()
-
-        if self.token_file.exists():
-            try:
-                saved = json.loads(self.token_file.read_text(encoding="utf-8"))
-                if (
-                    saved.get("token")
-                    and float(saved.get("expires_at", 0)) > now + 300
-                ):
-                    return saved["token"]
-            except Exception:
-                pass
+        if (
+            not force
+            and self._token
+            and now < self._token_expires_at - 60
+        ):
+            return self._token
 
         url = f"{self.base_url}/oauth2/tokenP"
-        body = {
+        payload = {
             "grant_type": "client_credentials",
             "appkey": self.app_key,
             "appsecret": self.app_secret,
         }
 
-        r = requests.post(
-            url,
-            headers={"content-type": "application/json"},
-            data=json.dumps(body),
-            timeout=15,
-        )
-        r.raise_for_status()
-        data = r.json()
-        token = data["access_token"]
+        try:
+            res = self.session.post(
+                url,
+                headers={
+                    "content-type": "application/json; charset=UTF-8",
+                },
+                json=payload,
+                timeout=(10, self.token_timeout),
+            )
+        except requests.exceptions.Timeout as e:
+            raise RuntimeError(
+                "KIS 토큰 발급 시간이 초과되었습니다. "
+                f"(timeout={self.token_timeout:.0f}초) "
+                "잠시 후 worker가 다시 시작되거나 재배포되면 다시 시도할 수 있습니다."
+            ) from e
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(
+                f"KIS 토큰 연결 오류: {type(e).__name__}: {e}"
+            ) from e
 
-        expires_at = now + 23 * 3600
-        raw_exp = data.get("access_token_token_expired")
-        if raw_exp:
-            try:
-                dt = datetime.strptime(raw_exp, "%Y-%m-%d %H:%M:%S")
-                expires_at = dt.timestamp()
-            except Exception:
-                pass
+        if res.status_code >= 400:
+            body = res.text[:1000]
+            raise requests.HTTPError(
+                f"{res.status_code} Client Error for KIS token: {body}",
+                response=res,
+            )
 
-        self.token_file.write_text(
-            json.dumps({"token": token, "expires_at": expires_at}),
-            encoding="utf-8",
-        )
+        data = res.json()
+        token = str(data.get("access_token", "") or "").strip()
+        if not token:
+            raise RuntimeError(
+                f"KIS 토큰 응답에 access_token이 없습니다: {data}"
+            )
+
+        expires_in = data.get("expires_in", 3600)
+        try:
+            expires_in = int(expires_in)
+        except Exception:
+            expires_in = 3600
+
+        self._token = token
+        self._token_expires_at = time.time() + max(300, expires_in)
         return token
 
-    def _headers(self, tr_id: str) -> Dict[str, str]:
-        return {
-            "content-type": "application/json; charset=utf-8",
-            "accept": "text/plain",
-            "authorization": f"Bearer {self.get_token()}",
+    def _headers(
+        self,
+        tr_id: str,
+        custtype: str = "P",
+        extra: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, str]:
+        token = self.get_token()
+
+        headers = {
+            "content-type": "application/json; charset=UTF-8",
+            "authorization": f"Bearer {token}",
             "appkey": self.app_key,
             "appsecret": self.app_secret,
             "tr_id": tr_id,
-            "custtype": "P",
-            "tr_cont": "",
+            "custtype": custtype,
         }
+        if extra:
+            headers.update(extra)
+        return headers
 
-    @staticmethod
-    def _response_dict(r: requests.Response) -> Dict[str, Any]:
-        """
-        KIS가 4xx/5xx를 돌려줘도 앱 전체를 예외로 끝내지 않고
-        실제 응답 본문을 화면에서 확인할 수 있게 dict로 돌려준다.
-        """
-        try:
-            data = r.json()
-            if not isinstance(data, dict):
-                data = {"response": data}
-        except Exception:
-            data = {
-                "rt_cd": "HTTP_ERROR",
-                "msg_cd": str(r.status_code),
-                "msg1": r.text[:1500],
-            }
+    def _request(
+        self,
+        method: str,
+        path: str,
+        tr_id: str,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+        json_body: Optional[Dict[str, Any]] = None,
+        timeout: Optional[float] = None,
+        retries: Optional[int] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        url = f"{self.base_url}{path}"
+        timeout = float(timeout or self.api_timeout)
+        retries = max(1, int(retries or self.api_retries))
 
-        data.setdefault("http_status", r.status_code)
-        data.setdefault("rt_cd", "0" if r.ok else "HTTP_ERROR")
-        if not r.ok:
-            data.setdefault("msg_cd", str(r.status_code))
-            data.setdefault("msg1", r.text[:1500])
-        return data
+        last_error: Optional[Exception] = None
 
-    def get(self, path: str, tr_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
-        r = requests.get(
-            f"{self.base_url}{path}",
-            headers=self._headers(tr_id),
+        for attempt in range(1, retries + 1):
+            try:
+                headers = self._headers(tr_id, extra=extra_headers)
+
+                if method.upper() == "GET":
+                    res = self.session.get(
+                        url,
+                        headers=headers,
+                        params=params or {},
+                        timeout=(10, timeout),
+                    )
+                else:
+                    res = self.session.post(
+                        url,
+                        headers=headers,
+                        json=json_body or {},
+                        timeout=(10, timeout),
+                    )
+
+                # 인증 만료/불일치가 의심되면 토큰 1회 갱신 후 재요청
+                if res.status_code in (401,):
+                    self._token = None
+                    self._token_expires_at = 0.0
+                    if attempt < retries:
+                        time.sleep(min(5 * attempt, 15))
+                        continue
+
+                res.raise_for_status()
+
+                try:
+                    return res.json()
+                except Exception as e:
+                    raise RuntimeError(
+                        f"KIS 응답 JSON 해석 실패: {res.text[:1000]}"
+                    ) from e
+
+            except (
+                requests.exceptions.ReadTimeout,
+                requests.exceptions.ConnectTimeout,
+                requests.exceptions.ConnectionError,
+            ) as e:
+                last_error = e
+                if attempt >= retries:
+                    break
+                time.sleep(min(2 ** attempt, 10))
+
+            except requests.HTTPError as e:
+                last_error = e
+                # 429/5xx는 일시 오류로 보고 재시도
+                status = getattr(e.response, "status_code", 0) or 0
+                if status == 429 or status >= 500:
+                    if attempt < retries:
+                        time.sleep(min(3 * attempt, 15))
+                        continue
+                raise
+
+            except requests.exceptions.RequestException as e:
+                last_error = e
+                if attempt >= retries:
+                    break
+                time.sleep(min(2 ** attempt, 10))
+
+        raise RuntimeError(
+            f"KIS API 요청 실패({retries}회 시도): "
+            f"{type(last_error).__name__ if last_error else 'UnknownError'}: "
+            f"{last_error}"
+        )
+
+    def get(
+        self,
+        path: str,
+        tr_id: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        return self._request(
+            "GET",
+            path,
+            tr_id,
             params=params,
-            timeout=15,
         )
-        if not r.ok:
-            return self._response_dict(r)
-        return r.json()
 
-    def post(self, path: str, tr_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
-        r = requests.post(
-            f"{self.base_url}{path}",
-            headers=self._headers(tr_id),
-            data=json.dumps(body),
-            timeout=15,
+    def post(
+        self,
+        path: str,
+        tr_id: str,
+        body: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        return self._request(
+            "POST",
+            path,
+            tr_id,
+            json_body=body,
         )
-        return self._response_dict(r)
 
+    # -----------------------------------------------------
+    # 국내 현재가
+    # -----------------------------------------------------
     def domestic_price(self, code: str) -> Dict[str, Any]:
         return self.get(
             "/uapi/domestic-stock/v1/quotations/inquire-price",
             "FHKST01010100",
             {
                 "FID_COND_MRKT_DIV_CODE": "J",
-                "FID_INPUT_ISCD": code,
+                "FID_INPUT_ISCD": str(code).zfill(6),
             },
         )
 
-    def domestic_volume_rank(self) -> Dict[str, Any]:
-        return self.get(
-            "/uapi/domestic-stock/v1/quotations/volume-rank",
-            "FHPST01710000",
-            {
-                "FID_COND_MRKT_DIV_CODE": "J",
-                "FID_COND_SCR_DIV_CODE": "20171",
-                "FID_INPUT_ISCD": "0000",
-                "FID_DIV_CLS_CODE": "0",
-                "FID_BLNG_CLS_CODE": "3",
-                "FID_TRGT_CLS_CODE": "111111111",
-                "FID_TRGT_EXLS_CLS_CODE": "0000000000",
-                "FID_INPUT_PRICE_1": "0",
-                "FID_INPUT_PRICE_2": "1000000",
-                "FID_VOL_CNT": "100000",
-                "FID_INPUT_DATE_1": "",
-            },
-        )
-
+    # -----------------------------------------------------
+    # 국내 잔고
+    # -----------------------------------------------------
     def domestic_balance(self) -> Dict[str, Any]:
-        tr_id = "VTTC8434R" if self.env == "demo" else "TTTC8434R"
+        self._validate_account()
+
+        tr_id = (
+            "VTTC8434R"
+            if self.env == "demo"
+            else "TTTC8434R"
+        )
+
         return self.get(
             "/uapi/domestic-stock/v1/trading/inquire-balance",
             tr_id,
@@ -266,39 +435,49 @@ class KISClient:
             },
         )
 
+    # -----------------------------------------------------
+    # 국내 현금주문
+    # -----------------------------------------------------
     def domestic_order(
         self,
         code: str,
         qty: int,
         side: str,
-        price: int = 0,
         market_order: bool = True,
+        price: int = 0,
     ) -> Dict[str, Any]:
+        self._validate_account()
+
+        side = str(side).lower().strip()
         if side not in ("buy", "sell"):
-            raise ValueError("side must be buy/sell")
+            raise ValueError("side는 buy 또는 sell 이어야 합니다.")
 
         if self.env == "demo":
             tr_id = "VTTC0012U" if side == "buy" else "VTTC0011U"
         else:
             tr_id = "TTTC0012U" if side == "buy" else "TTTC0011U"
 
+        ord_dvsn = "01" if market_order else "00"
+        ord_unpr = "0" if market_order else str(int(price))
+
         body = {
             "CANO": self.account_no,
             "ACNT_PRDT_CD": self.product_code,
-            "PDNO": code,
-            "ORD_DVSN": "01" if market_order else "00",
+            "PDNO": str(code).zfill(6),
+            "ORD_DVSN": ord_dvsn,
             "ORD_QTY": str(int(qty)),
-            "ORD_UNPR": "0" if market_order else str(int(price)),
-            "EXCG_ID_DVSN_CD": "KRX",
-            "SLL_TYPE": "01" if side == "sell" else "",
-            "CNDT_PRIC": "",
+            "ORD_UNPR": ord_unpr,
         }
+
         return self.post(
             "/uapi/domestic-stock/v1/trading/order-cash",
             tr_id,
             body,
         )
 
+    # -----------------------------------------------------
+    # 미국 지정가 주문
+    # -----------------------------------------------------
     def overseas_order_us(
         self,
         symbol: str,
@@ -307,26 +486,17 @@ class KISClient:
         limit_price: float,
         exchange: str = "NASD",
     ) -> Dict[str, Any]:
-        """
-        미국주식 지정가 주문.
-        모의투자: 매수 VTTT1002U / 매도 VTTT1001U, ORD_DVSN=00.
-        """
-        exchange = str(exchange).upper().strip()
-        symbol = str(symbol).upper().strip()
+        self._validate_account()
 
-        if exchange not in ("NASD", "NYSE", "AMEX"):
-            raise ValueError("US exchange must be NASD/NYSE/AMEX")
+        side = str(side).lower().strip()
         if side not in ("buy", "sell"):
-            raise ValueError("side must be buy/sell")
-        if not symbol:
-            raise ValueError("symbol is required")
-        if int(qty) <= 0:
-            raise ValueError("qty must be positive")
-        if float(limit_price) <= 0:
-            raise ValueError("limit_price must be positive")
+            raise ValueError("side는 buy 또는 sell 이어야 합니다.")
 
+        exchange = str(exchange or "NASD").upper()
+
+        # 프로젝트 기존 인터페이스와 호환되는 TR ID
         if self.env == "demo":
-            tr_id = "VTTT1002U" if side == "buy" else "VTTT1001U"
+            tr_id = "VTTT1002U" if side == "buy" else "VTTT1006U"
         else:
             tr_id = "TTTT1002U" if side == "buy" else "TTTT1006U"
 
@@ -334,59 +504,348 @@ class KISClient:
             "CANO": self.account_no,
             "ACNT_PRDT_CD": self.product_code,
             "OVRS_EXCG_CD": exchange,
-            "PDNO": symbol,
+            "PDNO": str(symbol).upper(),
             "ORD_QTY": str(int(qty)),
-            "OVRS_ORD_UNPR": f"{float(limit_price):.2f}",
-            "CTAC_TLNO": "",
-            "MGCO_APTM_ODNO": "",
-            "SLL_TYPE": "00" if side == "sell" else "",
+            "OVRS_ORD_UNPR": f"{float(limit_price):.4f}".rstrip("0").rstrip("."),
             "ORD_SVR_DVSN_CD": "0",
             "ORD_DVSN": "00",
         }
 
-        # 모의서버는 연속 호출에 민감할 수 있어 주문 사이에 짧게 간격을 둔다.
-        if self.env == "demo":
-            time.sleep(0.6)
-
-        res = self.post(
+        return self.post(
             "/uapi/overseas-stock/v1/trading/order",
             tr_id,
             body,
         )
 
-        # 디버깅에 필요한 값만 추가. App key/secret/token은 절대 넣지 않는다.
-        res.setdefault("_request", {})
-        res["_request"].update(
+    # -----------------------------------------------------
+    # 국내 거래대금/등락률 후보용 랭킹
+    # -----------------------------------------------------
+    def domestic_volume_rank(self) -> Dict[str, Any]:
+        return self.get(
+            "/uapi/domestic-stock/v1/quotations/volume-rank",
+            "FHPST01710000",
             {
-                "env": self.env,
-                "tr_id": tr_id,
-                "exchange": exchange,
-                "symbol": symbol,
-                "qty": int(qty),
-                "limit_price": f"{float(limit_price):.2f}",
-                "ord_dvsn": "00",
-            }
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_COND_SCR_DIV_CODE": "20171",
+                "FID_INPUT_ISCD": "0000",
+                "FID_DIV_CLS_CODE": "0",
+                "FID_BLNG_CLS_CODE": "0",
+                "FID_TRGT_CLS_CODE": "111111111",
+                "FID_TRGT_EXLS_CLS_CODE": "0000000000",
+                "FID_INPUT_PRICE_1": "1000",
+                "FID_INPUT_PRICE_2": "",
+                "FID_VOL_CNT": "100000",
+                "FID_INPUT_DATE_1": "",
+            },
         )
-        return res
 
 
-def _looks_like_non_common_stock(name: str) -> bool:
-    if not name:
-        return False
+# =========================================================
+# 거래 로그
+# =========================================================
+def append_trade_log(row: Dict[str, Any]) -> None:
+    payload = dict(row or {})
+    payload.setdefault(
+        "time",
+        datetime.now(KST).isoformat(timespec="seconds"),
+    )
 
-    n = str(name).upper().replace(" ", "")
+    try:
+        with TRADE_LOG_FILE.open("a", encoding="utf-8") as f:
+            f.write(
+                json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    default=str,
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
 
-    blocked_keywords = [
-        "KODEX", "TIGER", "ACE", "SOL", "RISE", "KOSEF", "HANARO",
-        "KBSTAR", "ARIRANG", "TIMEFOLIO", "PLUS", "FOCUS", "WOORI",
-        "ETN", "인버스", "레버리지", "선물", "S&P", "NASDAQ", "나스닥",
-        "채권", "국고채", "회사채", "금리", "달러", "엔선물", "원유",
-        "골드", "금선물", "리츠", "REIT", "스팩", "SPAC",
+
+def load_trade_log() -> pd.DataFrame:
+    if not TRADE_LOG_FILE.exists():
+        return pd.DataFrame()
+
+    rows: List[Dict[str, Any]] = []
+    try:
+        for line in TRADE_LOG_FILE.read_text(
+            encoding="utf-8"
+        ).splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except Exception:
+                continue
+    except Exception:
+        return pd.DataFrame()
+
+    return pd.DataFrame(rows)
+
+
+# =========================================================
+# 자금 분할
+# =========================================================
+def split_budget(
+    total: int,
+    weights: Iterable[int] = (40, 30, 30),
+) -> List[int]:
+    weights = [max(0, int(x)) for x in weights]
+    if not weights:
+        return []
+
+    s = sum(weights)
+    if s <= 0:
+        return [0 for _ in weights]
+
+    parts = [
+        int(int(total) * w / s)
+        for w in weights
     ]
-    if any(k.upper().replace(" ", "") in n for k in blocked_keywords):
+
+    # 반올림 손실은 마지막 구간에 보정
+    if parts:
+        parts[-1] += int(total) - sum(parts)
+
+    return parts
+
+
+# =========================================================
+# 시장 시간
+# =========================================================
+def is_market_open(market: str) -> bool:
+    market = str(market).upper()
+
+    if market in ("KR", "국내"):
+        now = datetime.now(KST)
+        if now.weekday() >= 5:
+            return False
+        return dtime(9, 0) <= now.time() < dtime(15, 30)
+
+    now = datetime.now(ET)
+    if now.weekday() >= 5:
+        return False
+    return dtime(9, 30) <= now.time() < dtime(16, 0)
+
+
+def market_force_exit_time(market: str) -> str:
+    market = str(market).upper()
+    if market in ("KR", "국내"):
+        return "15:15 KST"
+    return "15:50 ET"
+
+
+# =========================================================
+# yfinance 기반 기술데이터
+# =========================================================
+def _yf_symbol(symbol: str, market: str) -> str:
+    market = str(market).lower()
+
+    if market in ("국내", "kr", "korea"):
+        code = str(symbol).zfill(6)
+
+        # 기본은 KOSPI(.KS), 실패 시 score_ticker에서 .KQ도 재시도
+        return f"{code}.KS"
+
+    return str(symbol).upper()
+
+
+def _download_yf(
+    symbol: str,
+    market: str,
+    period: str = "5d",
+    interval: str = "5m",
+) -> pd.DataFrame:
+    try:
+        import yfinance as yf
+    except Exception as e:
+        raise RuntimeError(
+            "yfinance가 설치되어 있지 않습니다."
+        ) from e
+
+    market_norm = str(market).lower()
+
+    candidates = [_yf_symbol(symbol, market)]
+    if market_norm in ("국내", "kr", "korea"):
+        code = str(symbol).zfill(6)
+        candidates = [f"{code}.KS", f"{code}.KQ"]
+
+    last_df = pd.DataFrame()
+
+    for ticker in candidates:
+        try:
+            df = yf.download(
+                ticker,
+                period=period,
+                interval=interval,
+                auto_adjust=False,
+                progress=False,
+                threads=False,
+            )
+        except Exception:
+            continue
+
+        if df is None or df.empty:
+            continue
+
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+
+        keep = [
+            c
+            for c in ["Open", "High", "Low", "Close", "Volume"]
+            if c in df.columns
+        ]
+
+        if not keep:
+            continue
+
+        last_df = df[keep].copy().dropna()
+        if not last_df.empty:
+            return last_df
+
+    return last_df
+
+
+def _rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    delta = series.diff()
+    up = delta.clip(lower=0)
+    down = -delta.clip(upper=0)
+
+    avg_up = up.ewm(
+        alpha=1 / period,
+        adjust=False,
+        min_periods=period,
+    ).mean()
+
+    avg_down = down.ewm(
+        alpha=1 / period,
+        adjust=False,
+        min_periods=period,
+    ).mean()
+
+    rs = avg_up / avg_down.replace(0, pd.NA)
+    return 100 - (100 / (1 + rs))
+
+
+def score_ticker(
+    symbol: str,
+    market: str = "국내",
+) -> Optional[Dict[str, Any]]:
+    df = _download_yf(symbol, market)
+
+    if df is None or len(df) < 25:
+        return None
+
+    close = pd.to_numeric(df["Close"], errors="coerce")
+    volume = pd.to_numeric(df["Volume"], errors="coerce")
+
+    ma5 = close.rolling(5).mean()
+    ma20 = close.rolling(20).mean()
+    std20 = close.rolling(20).std()
+    upper = ma20 + 2 * std20
+    lower = ma20 - 2 * std20
+    rsi = _rsi(close, 14)
+
+    vol_avg20 = volume.rolling(20).mean()
+    vol_ratio = volume.iloc[-1] / vol_avg20.iloc[-1] if vol_avg20.iloc[-1] else 0
+
+    last = float(close.iloc[-1])
+    prev = float(close.iloc[-2])
+    rsi_last = float(rsi.iloc[-1]) if pd.notna(rsi.iloc[-1]) else 50.0
+
+    buy_score = 0
+    sell_score = 0
+    reasons_buy: List[str] = []
+    reasons_sell: List[str] = []
+
+    if last > float(ma5.iloc[-1]) > float(ma20.iloc[-1]):
+        buy_score += 2
+        reasons_buy.append("단기 상승정렬")
+    elif last < float(ma5.iloc[-1]) < float(ma20.iloc[-1]):
+        sell_score += 2
+        reasons_sell.append("단기 하락정렬")
+
+    if rsi_last < 35:
+        buy_score += 1
+        reasons_buy.append("RSI 과매도권")
+    elif rsi_last > 70:
+        sell_score += 1
+        reasons_sell.append("RSI 과열권")
+
+    if pd.notna(lower.iloc[-1]) and last <= float(lower.iloc[-1]) * 1.01:
+        buy_score += 1
+        reasons_buy.append("볼린저 하단 근접")
+
+    if pd.notna(upper.iloc[-1]) and last >= float(upper.iloc[-1]) * 0.995:
+        sell_score += 1
+        reasons_sell.append("볼린저 상단 근접")
+
+    if vol_ratio >= 1.5 and last > prev:
+        buy_score += 2
+        reasons_buy.append("거래량 급증 상승")
+    elif vol_ratio >= 1.5 and last < prev:
+        sell_score += 2
+        reasons_sell.append("거래량 급증 하락")
+
+    net = int(buy_score - sell_score)
+
+    if net >= 2:
+        signal = "🟢 매수 후보"
+    elif net <= -2:
+        signal = "🔴 매도 주의"
+    else:
+        signal = "🟡 관망"
+
+    return {
+        "종목": str(symbol),
+        "현재가": round(last, 4),
+        "RSI": round(rsi_last, 1),
+        "거래량배수": round(float(vol_ratio or 0), 2),
+        "매수점수": int(buy_score),
+        "매도점수": int(sell_score),
+        "순점수": int(net),
+        "종합신호": signal,
+        "매수근거": ", ".join(reasons_buy),
+        "매도근거": ", ".join(reasons_sell),
+    }
+
+
+# =========================================================
+# 국내 후보 탐색
+# =========================================================
+def _safe_num(value: Any, default: float = 0.0) -> float:
+    try:
+        if value in (None, ""):
+            return default
+        return float(str(value).replace(",", ""))
+    except Exception:
+        return default
+
+
+def _excluded_name(name: str) -> bool:
+    name = str(name or "").strip()
+    upper = name.upper()
+
+    if not name:
         return True
 
-    if n.endswith("우") or "우B" in n or "우C" in n:
+    keywords = (
+        "ETF",
+        "ETN",
+        "스팩",
+        "SPAC",
+        "리츠",
+        "REIT",
+    )
+    if any(k in upper for k in keywords):
+        return True
+
+    # 우선주 간단 필터
+    if name.endswith("우") or name.endswith("우B") or name.endswith("우C"):
         return True
 
     return False
@@ -397,313 +856,93 @@ def discover_domestic_candidates(
     top_n: int = 20,
 ) -> pd.DataFrame:
     raw = client.domestic_volume_rank()
-    rows = raw.get("output", []) or []
-    if not rows:
-        return pd.DataFrame()
+    rows = (raw or {}).get("output", []) or []
 
-    df = pd.DataFrame(rows)
+    if isinstance(rows, dict):
+        rows = [rows]
 
-    def pick(*names):
-        for n in names:
-            if n in df.columns:
-                return n
-        return None
+    out: List[Dict[str, Any]] = []
 
-    code_col = pick("mksc_shrn_iscd", "stck_shrn_iscd")
-    name_col = pick("hts_kor_isnm", "prdt_name")
-    price_col = pick("stck_prpr")
-    change_col = pick("prdy_ctrt")
-    volume_col = pick("acml_vol")
-    amount_col = pick("acml_tr_pbmn", "acml_tr_amt")
+    for r in rows:
+        code = str(
+            r.get("mksc_shrn_iscd")
+            or r.get("stck_shrn_iscd")
+            or r.get("pdno")
+            or ""
+        ).strip().zfill(6)
 
-    out = pd.DataFrame()
-    if code_col:
-        out["종목코드"] = df[code_col].astype(str).str.zfill(6)
-    if name_col:
-        out["종목명"] = df[name_col].astype(str)
-    if price_col:
-        out["현재가"] = pd.to_numeric(df[price_col], errors="coerce")
-    if change_col:
-        out["등락률"] = pd.to_numeric(df[change_col], errors="coerce")
-    if volume_col:
-        out["누적거래량"] = pd.to_numeric(df[volume_col], errors="coerce")
-    if amount_col:
-        out["거래대금"] = pd.to_numeric(df[amount_col], errors="coerce")
+        name = str(
+            r.get("hts_kor_isnm")
+            or r.get("prdt_name")
+            or ""
+        ).strip()
 
-    if "종목명" in out.columns:
-        out = out[~out["종목명"].apply(_looks_like_non_common_stock)]
+        if not code or code == "000000":
+            continue
+        if _excluded_name(name):
+            continue
 
-    if "현재가" in out.columns:
-        out = out[out["현재가"].fillna(0) >= 1000]
-
-    if "누적거래량" in out.columns:
-        out = out[out["누적거래량"].fillna(0) >= 100000]
-
-    if "등락률" in out.columns:
-        out = out[out["등락률"].between(-10, 20, inclusive="both")]
-
-    if "거래대금" in out.columns:
-        amount_rank = out["거래대금"].rank(
-            pct=True,
-            method="average",
-        ).fillna(0)
-    else:
-        amount_rank = pd.Series(0, index=out.index)
-
-    if "누적거래량" in out.columns:
-        volume_rank = out["누적거래량"].rank(
-            pct=True,
-            method="average",
-        ).fillna(0)
-    else:
-        volume_rank = pd.Series(0, index=out.index)
-
-    if "등락률" in out.columns:
-        change_norm = out["등락률"].clip(lower=0, upper=20) / 20.0
-    else:
-        change_norm = pd.Series(0, index=out.index)
-
-    out["주도주점수"] = (
-        amount_rank * 50
-        + volume_rank * 30
-        + change_norm * 20
-    ).round(1)
-
-    sort_cols = [
-        c for c in ["주도주점수", "거래대금", "누적거래량"]
-        if c in out.columns
-    ]
-    if sort_cols:
-        out = out.sort_values(
-            sort_cols,
-            ascending=[False] * len(sort_cols),
+        price = _safe_num(
+            r.get("stck_prpr")
+            or r.get("prpr")
         )
 
-    return out.head(top_n).reset_index(drop=True)
+        change = _safe_num(
+            r.get("prdy_ctrt")
+            or r.get("prdy_vrss_sign")
+        )
 
+        volume = _safe_num(
+            r.get("acml_vol")
+            or r.get("acml_voln")
+        )
 
-def _download_yf(symbol: str, market: str):
-    import yfinance as yf
+        amount = _safe_num(
+            r.get("acml_tr_pbmn")
+            or r.get("acml_tr_amt")
+        )
 
-    if market == "국내":
-        for suffix in (".KS", ".KQ"):
-            df = yf.download(
-                symbol + suffix,
-                period="5d",
-                interval="5m",
-                auto_adjust=False,
-                progress=False,
-            )
-            if df is not None and not df.empty:
-                return df
-        return None
+        if price < 1000:
+            continue
+        if volume < 100000:
+            continue
+        if change < -10 or change > 20:
+            continue
 
-    return yf.download(
-        symbol,
-        period="5d",
-        interval="5m",
-        auto_adjust=False,
-        progress=False,
-    )
+        # 주도주점수: 거래대금 + 거래량 + 상승률을 0~100 범위로 단순 정규화
+        amount_score = min(50.0, max(0.0, amount / 1_000_000_000 * 2.0))
+        volume_score = min(25.0, max(0.0, volume / 1_000_000 * 5.0))
+        change_score = min(25.0, max(0.0, change * 2.5))
+        leader_score = min(100.0, amount_score + volume_score + change_score)
 
+        out.append(
+            {
+                "종목코드": code,
+                "종목명": name,
+                "현재가": int(price),
+                "등락률": round(change, 2),
+                "누적거래량": int(volume),
+                "거래대금": int(amount),
+                "주도주점수": round(leader_score, 1),
+            }
+        )
 
-def _flatten(df):
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    return df.dropna()
-
-
-def indicators(
-    df,
-    bb_period=20,
-    bb_std=2.0,
-    rsi_period=14,
-    vol_period=20,
-):
-    d = _flatten(df.copy())
-    close = d["Close"].astype(float)
-    high = d["High"].astype(float)
-    low = d["Low"].astype(float)
-    open_ = d["Open"].astype(float)
-    volume = d["Volume"].astype(float)
-
-    d["MA20"] = close.rolling(bb_period).mean()
-    d["STD20"] = close.rolling(bb_period).std()
-    d["BB_UPPER"] = d["MA20"] + bb_std * d["STD20"]
-    d["BB_LOWER"] = d["MA20"] - bb_std * d["STD20"]
-
-    delta = close.diff()
-    gain = delta.clip(lower=0).rolling(rsi_period).mean()
-    loss = (-delta.clip(upper=0)).rolling(rsi_period).mean()
-    rs = gain / loss.replace(0, np.nan)
-    d["RSI"] = 100 - 100 / (1 + rs)
-
-    d["VOL_MA"] = volume.rolling(vol_period).mean()
-    d["VOL_RATIO"] = volume / d["VOL_MA"]
-    d["MA5"] = close.rolling(5).mean()
-
-    d["BODY"] = (close - open_).abs()
-    d["RANGE"] = (high - low).replace(0, np.nan)
-    d["BULL"] = close > open_
-    d["BEAR"] = close < open_
-    return d.dropna()
-
-
-def score_latest(d):
-    if d is None or len(d) < 2:
-        return None
-
-    x, prev = d.iloc[-1], d.iloc[-2]
-    buy = sell = 0
-
-    if x["Close"] <= x["BB_LOWER"] * 1.01:
-        buy += 2
-    if prev["Close"] < prev["BB_LOWER"] and x["Close"] > x["BB_LOWER"]:
-        buy += 2
-    if x["Close"] >= x["BB_UPPER"] * 0.99:
-        sell += 2
-    if prev["Close"] > prev["BB_UPPER"] and x["Close"] < x["BB_UPPER"]:
-        sell += 2
-
-    if 30 <= x["RSI"] <= 40 and x["RSI"] > prev["RSI"]:
-        buy += 2
-    elif x["RSI"] < 30:
-        buy += 1
-
-    if 60 <= x["RSI"] <= 70 and x["RSI"] < prev["RSI"]:
-        sell += 2
-    elif x["RSI"] > 70:
-        sell += 1
-
-    if x["VOL_RATIO"] >= 1.5 and x["BULL"]:
-        buy += 2
-    if x["VOL_RATIO"] >= 1.5 and x["BEAR"]:
-        sell += 2
-
-    if x["BULL"] and x["BODY"] / x["RANGE"] >= 0.6:
-        buy += 1
-    if x["BEAR"] and x["BODY"] / x["RANGE"] >= 0.6:
-        sell += 1
-
-    if x["MA5"] > x["MA20"]:
-        buy += 1
-    if x["MA5"] < x["MA20"]:
-        sell += 1
-
-    net = buy - sell
-    signal = (
-        "🟢 매수 후보"
-        if net >= 4
-        else "🔴 매도 후보"
-        if net <= -4
-        else "🟡 관망"
-    )
-    return buy, sell, net, signal, x
-
-
-def score_ticker(symbol: str, market: str):
-    df = _download_yf(symbol, market)
-    if df is None or len(df) < 30:
-        return None
-
-    d = indicators(df)
-    s = score_latest(d)
-    if not s:
-        return None
-
-    buy, sell, net, signal, x = s
-    return {
-        "종목": symbol,
-        "현재가": round(float(x["Close"]), 2),
-        "RSI": round(float(x["RSI"]), 1),
-        "거래량배수": round(float(x["VOL_RATIO"]), 2),
-        "매수점수": int(buy),
-        "매도점수": int(sell),
-        "순점수": int(net),
-        "종합신호": signal,
-    }
-
-
-def parse_domestic_holdings(
-    balance_json: Dict[str, Any],
-) -> pd.DataFrame:
-    rows = (balance_json or {}).get("output1", []) or []
-    if not rows:
+    if not out:
         return pd.DataFrame(
-            columns=["종목코드", "종목명", "보유수량", "평균매입가", "현재가"]
+            columns=[
+                "종목코드",
+                "종목명",
+                "현재가",
+                "등락률",
+                "누적거래량",
+                "거래대금",
+                "주도주점수",
+            ]
         )
 
-    df = pd.DataFrame(rows)
-
-    def first_existing(*names):
-        for n in names:
-            if n in df.columns:
-                return n
-        return None
-
-    code = first_existing("pdno", "mksc_shrn_iscd")
-    name = first_existing("prdt_name", "hts_kor_isnm")
-    qty = first_existing("hldg_qty", "hold_qty")
-    avg = first_existing("pchs_avg_pric", "avg_pric")
-    cur = first_existing("prpr", "stck_prpr")
-
-    out = pd.DataFrame()
-    out["종목코드"] = df[code].astype(str).str.zfill(6) if code else ""
-    out["종목명"] = df[name].astype(str) if name else ""
-    out["보유수량"] = (
-        pd.to_numeric(df[qty], errors="coerce").fillna(0).astype(int)
-        if qty
-        else 0
+    df = pd.DataFrame(out).sort_values(
+        ["주도주점수", "거래대금", "누적거래량"],
+        ascending=[False, False, False],
     )
-    out["평균매입가"] = (
-        pd.to_numeric(df[avg], errors="coerce").fillna(0.0)
-        if avg
-        else 0.0
-    )
-    out["현재가"] = (
-        pd.to_numeric(df[cur], errors="coerce").fillna(0.0)
-        if cur
-        else 0.0
-    )
-    return out[out["보유수량"] > 0].reset_index(drop=True)
 
-
-def split_budget(total: int, parts: List[int]) -> List[int]:
-    if sum(parts) <= 0:
-        return [0 for _ in parts]
-    return [int(total * p / sum(parts)) for p in parts]
-
-
-def is_market_open(market: str) -> bool:
-    now = datetime.now(
-        ZoneInfo("Asia/Seoul" if market == "KR" else "America/New_York")
-    )
-    if now.weekday() >= 5:
-        return False
-
-    t = now.time()
-    if market == "KR":
-        return dtime(9, 0) <= t < dtime(15, 30)
-    return dtime(9, 30) <= t < dtime(16, 0)
-
-
-def market_force_exit_time(market: str) -> str:
-    return "15:15 KST" if market == "KR" else "15:50 ET"
-
-
-def append_trade_log(row: Dict[str, Any]):
-    df = pd.DataFrame([row])
-    if TRADE_LOG.exists():
-        df.to_csv(TRADE_LOG, mode="a", header=False, index=False)
-    else:
-        df.to_csv(TRADE_LOG, index=False)
-
-
-def load_trade_log() -> pd.DataFrame:
-    if not TRADE_LOG.exists():
-        return pd.DataFrame()
-
-    try:
-        return pd.read_csv(TRADE_LOG)
-    except Exception:
-        return pd.DataFrame()
+    return df.head(int(top_n)).reset_index(drop=True)
