@@ -53,6 +53,10 @@ class AutoConfig:
     leader_exception_min_lead_score: float = 75.0
     leader_exception_min_combined_score: float = 60.0
 
+    # 고가 종목 1주 허용
+    # 1차 분할예산보다 주가가 높더라도 종목당 총예산 이내면 1주 진입 허용
+    allow_single_share_over_stage_budget: bool = True
+
     # 국내 장중 규칙
     last_entry_time: str = "14:50"
     force_exit_time: str = "15:15"
@@ -174,6 +178,21 @@ def _split_amounts(config: AutoConfig):
         int(config.per_stock_budget * config.buy2_pct / total_pct),
         int(config.per_stock_budget * config.buy3_pct / total_pct),
     ]
+
+
+def _first_entry_qty_kr(config: AutoConfig, stage1_budget: float, price: float) -> int:
+    qty = _calc_qty(stage1_budget, price)
+    if qty > 0:
+        return qty
+
+    if (
+        getattr(config, "allow_single_share_over_stage_budget", True)
+        and price > 0
+        and price <= float(config.per_stock_budget)
+    ):
+        return 1
+
+    return 0
 
 
 def _parse_domestic_holdings(balance_json: Dict[str, Any]) -> pd.DataFrame:
@@ -315,8 +334,6 @@ def run_domestic_cycle(
         save_state(state)
         return result
 
-    # 국내 분석/판단 운영시간: 08:30 ~ 16:00
-    # 실제 모의/실전 주문 전송은 정규장(09:00 ~ 15:30)에만 허용합니다.
     if not (dtime(8, 30) <= now.time() < dtime(16, 0)):
         result["message"] = "국내 운영시간 외(08:30~16:00): 판단/주문 없음"
         save_state(state)
@@ -498,20 +515,36 @@ def run_domestic_cycle(
         if price <= 0:
             continue
 
-        qty = _calc_qty(parts[0], price)
+        qty = _first_entry_qty_kr(config, parts[0], price)
         if qty <= 0:
             result["actions"].append({
                 "symbol": symbol,
                 "action": "SKIP",
-                "reason": f"1차 예산 {parts[0]:,}원보다 주가가 높음",
+                "reason": (
+                    f"주가 {price:,.0f}원이 종목당 한도 "
+                    f"{config.per_stock_budget:,}원을 초과"
+                ),
             })
             continue
 
         cost = int(qty * price)
+        if cost > config.per_stock_budget:
+            result["actions"].append({
+                "symbol": symbol,
+                "action": "SKIP",
+                "reason": (
+                    f"예상매수금액 {cost:,}원이 종목당 한도 "
+                    f"{config.per_stock_budget:,}원을 초과"
+                ),
+            })
+            continue
+
         if state["daily_buy_amount"] + cost > config.daily_budget:
             continue
         if state["daily_orders"] >= config.max_daily_orders:
             break
+
+        high_price_single = qty == 1 and price > parts[0]
 
         entry_reason = (
             f"대장주 예외 1차매수 · TOP1 · 주도주점수 {lead_score:.1f} · "
@@ -519,6 +552,13 @@ def run_domestic_cycle(
             if leader_exception and not normal_entry
             else f"1차 분할매수 · 종합점수 {combined:.1f} · {signal}"
         )
+
+        if high_price_single:
+            entry_reason += (
+                f" · 고가종목 1주 허용"
+                f"(1차예산 {parts[0]:,}원 < 주가 {price:,.0f}원 ≤ "
+                f"종목한도 {config.per_stock_budget:,}원)"
+            )
 
         act = _place_order(
             client, state, symbol, "buy", qty,
@@ -718,6 +758,21 @@ def _us_stage_qty(config: AutoConfig, stage: int, price: float) -> int:
     return _calc_qty(_us_stage_budget(config, stage), price)
 
 
+def _us_first_entry_qty(config: AutoConfig, price: float) -> int:
+    qty = _us_stage_qty(config, 1, price)
+    if qty > 0:
+        return qty
+
+    if (
+        getattr(config, "allow_single_share_over_stage_budget", True)
+        and price > 0
+        and price <= float(config.us_per_stock_budget_usd)
+    ):
+        return 1
+
+    return 0
+
+
 def _place_overseas_order(
     client,
     state,
@@ -791,16 +846,6 @@ def run_overseas_cycle(
     config: AutoConfig,
     execute_orders: bool = False,
 ) -> Dict[str, Any]:
-    """
-    미국 자동매매 1회 사이클.
-
-    모의투자와 실전투자가 동일한 전략 규칙을 사용합니다.
-    - TOP5 중 🟢 매수 후보 + 종합점수 통과 종목만 신규진입
-    - 달러 예산 기준 1/2/3차 분할매수
-    - 손절 / 1차 익절 / 2차 익절
-    - 장마감 전 강제청산
-    - 실제 KIS 현재가와 계좌 잔고를 기준으로 판단
-    """
     state = load_us_state()
     now = _now_et()
 
@@ -827,7 +872,6 @@ def run_overseas_cycle(
         holdings = {}
         result["balance_warning"] = repr(e)
 
-    # 기존 추적 포지션 관리
     for symbol, pos in list(state["positions"].items()):
         actual = holdings.get(symbol, {})
         actual_qty = int(actual.get("qty", 0))
@@ -945,7 +989,6 @@ def run_overseas_cycle(
                     pos["expected_qty"] = int(pos.get("expected_qty", 0)) + qty
                     state["daily_buy_amount_usd"] += cost
 
-    # 신규진입 제한
     if now.time() >= _clock(config.us_last_entry_time):
         result["message"] = f"{config.us_last_entry_time} ET 이후 미국 신규매수 금지"
         save_us_state(state)
@@ -964,7 +1007,6 @@ def run_overseas_cycle(
         result["state"] = state
         return result
 
-    # 신규진입
     for _, row in leader_df.iterrows():
         if len(state["positions"]) >= config.max_positions:
             break
@@ -984,7 +1026,6 @@ def run_overseas_cycle(
         except Exception:
             combined = 0.0
 
-        # 실전과 동일: 녹색 매수 후보 + 최소점수 둘 다 통과해야 진입
         if config.require_green_signal and "매수 후보" not in signal:
             continue
 
@@ -1003,31 +1044,55 @@ def run_overseas_cycle(
             })
             continue
 
-        qty = _us_stage_qty(config, 1, price)
+        qty = _us_first_entry_qty(config, price)
         if qty <= 0:
             result["actions"].append({
                 "symbol": symbol,
                 "action": "SKIP",
                 "reason": (
-                    f"1차 예산 ${_us_stage_budget(config, 1):.2f}보다 "
-                    f"주가 ${price:.2f}가 높음"
+                    f"주가 ${price:.2f}가 미국 종목당 한도 "
+                    f"${config.us_per_stock_budget_usd:.2f}를 초과"
                 ),
             })
             continue
 
         cost = qty * price
 
+        if cost > config.us_per_stock_budget_usd:
+            result["actions"].append({
+                "symbol": symbol,
+                "action": "SKIP",
+                "reason": (
+                    f"예상매수금액 ${cost:.2f}가 미국 종목당 한도 "
+                    f"${config.us_per_stock_budget_usd:.2f}를 초과"
+                ),
+            })
+            continue
+
         if state["daily_buy_amount_usd"] + cost > config.us_daily_budget_usd:
             continue
 
+        high_price_single = qty == 1 and price > _us_stage_budget(config, 1)
+
+        reason = (
+            f"1차 분할매수 · 종합점수 {combined:.1f} · {signal}"
+        )
+        if high_price_single:
+            reason += (
+                f" · 고가종목 1주 허용"
+                f"(1차예산 ${_us_stage_budget(config, 1):.2f} < "
+                f"주가 ${price:.2f} ≤ 종목한도 ${config.us_per_stock_budget_usd:.2f})"
+            )
+
         act = _place_overseas_order(
             client, state, symbol, "buy", qty, price,
-            f"1차 분할매수 · 종합점수 {combined:.1f} · {signal}",
+            reason,
             execute_orders,
         )
         result["actions"].append({
             "symbol": symbol,
             "action": "BUY1",
+            "reason": reason,
             **act,
         })
 
