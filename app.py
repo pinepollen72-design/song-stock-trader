@@ -256,6 +256,13 @@ cfg = AutoConfig(
     require_green_signal=True,
 )
 
+# 대장주 예외 진입 규칙
+# TOP1 + 주도주점수 75 이상 + 종합점수 60 이상이면
+# 녹색 신호가 아니어도 1차 매수만 허용합니다.
+cfg.leader_exception_enabled = True
+cfg.leader_exception_min_lead_score = 75.0
+cfg.leader_exception_min_combined_score = 60.0
+
 cfg.us_daily_budget_usd = float(us_daily_budget)
 cfg.us_per_stock_budget_usd = float(us_per_stock_budget)
 
@@ -664,6 +671,13 @@ st.write(
     f"1차 익절 +{float(take1):.1f}% / "
     f"2차 익절 +{float(take2):.1f}%"
 )
+
+if market == "국내" and strategy_mode == "대장주 추세매매 모드":
+    st.info(
+        "👑 대장주 예외 진입 ON: TOP1 + 주도주점수 75 이상 + "
+        "종합점수 60 이상이면 녹색 신호가 아니어도 1차 매수만 허용합니다. "
+        "예외 진입 종목은 2·3차 추가매수하지 않습니다."
+    )
 
 open_now = is_market_open(
     "KR"
