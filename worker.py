@@ -8,7 +8,6 @@ import time
 import traceback
 from datetime import datetime, time as dtime
 from pathlib import Path
-from typing import Dict, Tuple
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -42,8 +41,11 @@ LOOP_SECONDS = max(30, int(os.getenv("WORKER_LOOP_SECONDS", "60")))
 KR_RESCAN_SECONDS = max(120, int(os.getenv("KR_RESCAN_SECONDS", "300")))
 US_RESCAN_SECONDS = max(120, int(os.getenv("US_RESCAN_SECONDS", "300")))
 
-KR_DAILY_BUDGET = int(os.getenv("KR_DAILY_BUDGET", "300000"))
-KR_PER_STOCK_BUDGET = int(os.getenv("KR_PER_STOCK_BUDGET", "100000"))
+# 국내 모의자동매매 한도
+# 하루 최대 1,000,000원 / 종목당 최대 300,000원
+KR_DAILY_BUDGET = int(os.getenv("KR_DAILY_BUDGET", "1000000"))
+KR_PER_STOCK_BUDGET = int(os.getenv("KR_PER_STOCK_BUDGET", "300000"))
+
 US_DAILY_BUDGET = float(os.getenv("US_DAILY_BUDGET", "1500"))
 US_PER_STOCK_BUDGET = float(os.getenv("US_PER_STOCK_BUDGET", "600"))
 
@@ -52,8 +54,6 @@ STOP_LOSS = float(os.getenv("STOP_LOSS_PCT", "3.0"))
 TAKE1 = float(os.getenv("TAKE1_PCT", "3.0"))
 TAKE2 = float(os.getenv("TAKE2_PCT", "5.0"))
 
-# 국내 일반 진입: 65 + 녹색
-# 국내 예외 진입: TOP1 + 주도주 75 + 종합 60, 1차만
 MIN_SCORE = float(os.getenv("MIN_COMBINED_SCORE", "65"))
 LEADER_EXCEPTION_MIN_LEAD = float(os.getenv("LEADER_EXCEPTION_MIN_LEAD", "75"))
 LEADER_EXCEPTION_MIN_COMBINED = float(os.getenv("LEADER_EXCEPTION_MIN_COMBINED", "60"))
@@ -86,6 +86,8 @@ def save_status(**kwargs) -> None:
         "updated_at": datetime.now(KST).isoformat(timespec="seconds"),
         "env": WORKER_ENV,
         "execute_orders": EXECUTE_ORDERS,
+        "kr_daily_budget": KR_DAILY_BUDGET,
+        "kr_per_stock_budget": KR_PER_STOCK_BUDGET,
         **kwargs,
     }
     try:
@@ -111,7 +113,6 @@ def in_kr_monitor_window(now=None) -> bool:
     now = now or datetime.now(KST)
     if now.weekday() >= 5:
         return False
-    # 08:30부터 후보 준비, 16:00까지 청산/상태 확인
     return dtime(8, 30) <= now.time() < dtime(16, 0)
 
 
@@ -119,7 +120,6 @@ def in_us_monitor_window(now=None) -> bool:
     now = now or datetime.now(ET)
     if now.weekday() >= 5:
         return False
-    # 미국 정규장 주변만 worker 활성화
     return dtime(9, 20) <= now.time() < dtime(16, 10)
 
 
@@ -237,7 +237,6 @@ def make_config() -> AutoConfig:
     cfg.us_last_entry_time = "15:30"
     cfg.us_force_exit_time = "15:50"
 
-    # 국내 실제 주문 엔진 시간
     cfg.last_entry_time = "14:50"
     cfg.force_exit_time = "15:15"
     return cfg
@@ -256,7 +255,6 @@ def main() -> int:
     client = KISClient(settings=settings, env=WORKER_ENV)
     cfg = make_config()
 
-    # 시작 시 API 확인
     client.get_token()
 
     real_execute = bool(EXECUTE_ORDERS)
@@ -270,6 +268,14 @@ def main() -> int:
             "⚠️ 국내+미국 실전 worker 시작 "
             f"(주문전송={'ON' if real_execute else 'DRY'})"
         )
+
+    log(
+        f"💰 KR 한도: 하루 {KR_DAILY_BUDGET:,}원 / "
+        f"종목당 {KR_PER_STOCK_BUDGET:,}원 "
+        f"(1차 {int(KR_PER_STOCK_BUDGET*0.4):,} / "
+        f"2차 {int(KR_PER_STOCK_BUDGET*0.3):,} / "
+        f"3차 {int(KR_PER_STOCK_BUDGET*0.3):,})"
+    )
 
     kr_leaders = pd.DataFrame()
     us_leaders = pd.DataFrame()
@@ -302,7 +308,6 @@ def main() -> int:
                     except Exception as e:
                         log(f"KR 후보 스캔 오류: {type(e).__name__}: {e}")
 
-                # 관리/주문 판단은 매 loop마다 실행
                 try:
                     kr_result = run_domestic_cycle(
                         client=client,
@@ -364,8 +369,6 @@ def main() -> int:
 
         elapsed = time.time() - cycle_started
         sleep_for = max(1.0, LOOP_SECONDS - elapsed)
-
-        # 두 시장 모두 감시시간 밖이면 API 호출 없이 그대로 대기
         time.sleep(sleep_for)
 
     save_status(running=False)
