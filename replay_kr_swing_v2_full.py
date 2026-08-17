@@ -36,7 +36,7 @@ from trader_core import Settings, KISClient
 import replay_kr
 
 KST = ZoneInfo("Asia/Seoul")
-SWING_VERSION = "kr-swing-v2-dual-entry-fast-v1-diag1"
+SWING_VERSION = "kr-swing-v2-dual-entry-fast-v1-diag2-2025"
 
 _THREAD: threading.Thread | None = None
 _LOCK = threading.RLock()
