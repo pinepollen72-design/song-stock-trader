@@ -65,8 +65,8 @@ for _p in (ROOT, RAW_DAILY_DIR):
 
 @dataclass(frozen=True)
 class SwingConfig:
-    start_date: str = "2024-01-01"
-    end_date: str = "2024-12-31"
+    start_date: str = "2025-01-01"
+    end_date: str = "2025-12-31"
     initial_capital_krw: int = 10_000_000
     max_positions: int = 3
     max_new_entries_per_day: int = 2
